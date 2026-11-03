@@ -15,31 +15,39 @@ def conectar():
             precio   REAL NOT NULL DEFAULT 0
         )
     """)
+    columnas = [c[1] for c in con.execute("PRAGMA table_info(productos)")]
+    if "codigo" not in columnas:
+        con.execute("ALTER TABLE productos ADD COLUMN codigo TEXT")
+    con.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_codigo ON productos(codigo)"
+    )
+    con.commit()
     return con
 
 
-def anadir(con, nombre, cantidad, precio):
+def anadir(con, nombre, cantidad, precio, codigo=None):
     try:
         con.execute(
-            "INSERT INTO productos (nombre, cantidad, precio) VALUES (?, ?, ?)",
-            (nombre, cantidad, precio),
+            "INSERT INTO productos (nombre, codigo, cantidad, precio) "
+            "VALUES (?, ?, ?, ?)",
+            (nombre, codigo, cantidad, precio),
         )
         con.commit()
         print(f"Añadido: {nombre}")
     except sqlite3.IntegrityError:
-        print("Ese producto ya existe.")
+        print("Ya existe un producto con ese nombre o código.")
 
 
 def listar(con):
     filas = con.execute(
-        "SELECT id, nombre, cantidad, precio FROM productos ORDER BY nombre"
+        "SELECT id, nombre, codigo, cantidad, precio FROM productos ORDER BY nombre"
     ).fetchall()
     if not filas:
         print("Almacén vacío.")
         return
-    print(f"{'ID':<4}{'Nombre':<20}{'Cant.':>6}{'Precio':>10}")
-    for id_, nombre, cant, precio in filas:
-        print(f"{id_:<4}{nombre:<20}{cant:>6}{precio:>10.2f}")
+    print(f"{'ID':<4}{'Nombre':<20}{'Código':<16}{'Cant.':>6}{'Precio':>10}")
+    for id_, nombre, codigo, cant, precio in filas:
+        print(f"{id_:<4}{nombre:<20}{codigo or '-':<16}{cant:>6}{precio:>10.2f}")
 
 
 def mover_stock(con, nombre, delta):
@@ -84,8 +92,10 @@ def main():
         op = input(menu).strip()
         try:
             if op == "1":
-                anadir(con, input("Nombre: "), int(input("Cantidad: ")),
-                       float(input("Precio: ").replace(",", ".")))
+                nombre = input("Nombre: ")
+                codigo = input("Código de barras (opcional): ").strip() or None
+                anadir(con, nombre, int(input("Cantidad: ")),
+                       float(input("Precio: ").replace(",", ".")), codigo)
             elif op == "2":
                 listar(con)
             elif op == "3":

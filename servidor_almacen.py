@@ -54,6 +54,8 @@ class Manejador(BaseHTTPRequestHandler):
             datos = json.loads(self.rfile.read(n) or b"{}")
         except ValueError:
             return self.error("JSON no válido")
+        if not isinstance(datos, dict):
+            return self.error("JSON no válido")
 
         con = conectar()
         try:

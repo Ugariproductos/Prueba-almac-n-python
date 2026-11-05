@@ -1,23 +1,27 @@
-"""Calcula en qué cajas de envío cabe cada pedido.
+"""Calcula en qué cajas de envío va cada pedido y cómo colocar la mercancía.
 
 Lee un Excel con dos hojas:
-  - Artículos: Referencia | Descripción | Largo | Ancho | Alto | Uds por caja
-    (medidas en cm de la caja del artículo y unidades que trae esa caja)
+  - Articulos: Referencia | Descripción | Largo | Ancho | Alto | Uds por caja
+               [| Largo ud | Ancho ud | Alto ud]   (cm)
+    Medidas de la caja del artículo y unidades que trae. Si se rellenan las
+    medidas de una unidad se usan; si no, se estiman dividiendo la caja.
   - Cajas:     Caja | Largo | Ancho | Alto   (cajas de envío, en cm)
 
-El volumen de una unidad = volumen de la caja del artículo / uds por caja.
-Se mezclan artículos en la misma caja y se busca usar el menor número de cajas.
-Para ampliar productos o cajas basta con añadir filas al Excel.
+Cada unidad es un bloque que se coloca por capas dentro de la caja: rejilla
+nx × ny en el suelo, varias alturas, y la siguiente referencia encima.
+Se mezclan artículos y se busca usar el menor número de cajas.
+Es el mismo algoritmo que el artefacto "Cajas por pedido".
 """
 
 import os
+import re
 import sys
+from itertools import permutations
 
 from openpyxl import load_workbook
 
 CARPETA = os.path.dirname(os.path.abspath(__file__))
 EXCEL = os.path.join(CARPETA, "cajas.xlsx")
-APROVECHAMIENTO = 0.90  # fracción del volumen de la caja que se puede llenar
 EPS = 1e-9
 
 
@@ -31,10 +35,35 @@ def _col(cabeceras, *claves):
     return None
 
 
+def _col_ud(cabeceras, clave):
+    for i, c in enumerate(cabeceras):
+        texto = str(c or "").strip().lower()
+        if clave in texto and re.search(r"\bud\b|unidad", texto):
+            return i
+    return None
+
+
 def _num(v):
     if v is None or v == "":
         return None
     return float(str(v).replace(",", "."))
+
+
+def dims_unidad(l, a, h, uds):
+    """Medidas estimadas de una unidad: se reparte la caja entre sus unidades."""
+    d = [l, a, h]
+    n = int(round(uds or 1))
+    factores, p = [], 2
+    while n > 1:
+        if n % p == 0:
+            factores.append(p)
+            n //= p
+        else:
+            p += 1
+    for p in sorted(factores, reverse=True):
+        i = d.index(max(d))
+        d[i] /= p
+    return d
 
 
 def leer_excel(ruta=EXCEL):
@@ -53,16 +82,19 @@ def leer_excel(ruta=EXCEL):
         if i_ref is not None:  # hoja de artículos
             i_desc = _col(cab, "desc", "nombre")
             i_uds = _col(cab, "uds", "unidades", "cantidad")
+            u_l, u_a, u_h = _col_ud(cab, "largo"), _col_ud(cab, "ancho"), _col_ud(cab, "alto")
             for f in filas[1:]:
                 if not f or f[i_ref] in (None, ""):
                     continue
                 ref = str(f[i_ref]).strip()
-                uds = _num(f[i_uds]) if i_uds is not None else 1
-                vol_caja = _num(f[i_l]) * _num(f[i_a]) * _num(f[i_h])
+                l, a, h = _num(f[i_l]), _num(f[i_a]), _num(f[i_h])
+                uds = (_num(f[i_uds]) if i_uds is not None else 1) or 1
+                ud = [_num(f[i]) if i is not None else None for i in (u_l, u_a, u_h)]
                 articulos[ref] = {
                     "ref": ref,
                     "desc": str(f[i_desc] or "") if i_desc is not None else "",
-                    "vol_ud": vol_caja / (uds or 1),
+                    "vol_ud": l * a * h / uds,
+                    "u": ud if all(ud) else dims_unidad(l, a, h, uds),
                 }
         else:  # hoja de cajas de envío
             i_nom = _col(cab, "caja", "nombre", "tipo")
@@ -71,11 +103,8 @@ def leer_excel(ruta=EXCEL):
             for f in filas[1:]:
                 if not f or f[i_nom] in (None, ""):
                     continue
-                cajas.append({
-                    "nombre": str(f[i_nom]).strip(),
-                    "medidas": f"{f[i_l]}x{f[i_a]}x{f[i_h]}",
-                    "vol": _num(f[i_l]) * _num(f[i_a]) * _num(f[i_h]),
-                })
+                l, a, h = _num(f[i_l]), _num(f[i_a]), _num(f[i_h])
+                cajas.append({"nombre": str(f[i_nom]).strip(), "l": l, "a": a, "h": h, "vol": l * a * h})
     wb.close()
     if not articulos:
         raise ValueError("No encuentro la hoja de artículos (falta columna Referencia).")
@@ -86,71 +115,104 @@ def leer_excel(ruta=EXCEL):
 
 # ---------- cálculo ----------
 
-def empaquetar(pedido, articulos, cajas, aprovechamiento=APROVECHAMIENTO):
-    """pedido: lista de (referencia, cantidad).
+def _orientaciones(u):
+    return list(dict.fromkeys(permutations(u)))
 
-    Devuelve lista de cajas: {"caja", "medidas", "capacidad", "usado", "contenido": {ref: uds}}.
-    Llena primero cajas grandes (menos cajas) y después cambia cada una
-    por la caja más pequeña en la que cabe su contenido.
-    """
-    tipos = sorted(cajas, key=lambda c: c["vol"])  # de pequeña a grande
+
+def _llenar(caja, items):
+    """Coloca por capas lo que quepa de items [(ref, cant, dims)]. Devuelve (capas, puestos)."""
+    z, capas, puestos = 0.0, [], {}
+    for ref, q, u in items:
+        while q > 0:
+            mejor = None
+            for ox, oy, oz in _orientaciones(u):
+                nx = int(caja["l"] / ox + EPS)
+                ny = int(caja["a"] / oy + EPS)
+                alt = int((caja["h"] - z) / oz + EPS)
+                per = nx * ny
+                if not per or alt < 1:
+                    continue
+                k = min(q, per * alt)
+                niveles = -(-k // per)
+                usado = niveles * oz
+                if mejor is None or k > mejor["k"] or (k == mejor["k"] and usado < mejor["usado"]):
+                    mejor = {"o": (ox, oy, oz), "nx": nx, "ny": ny, "per": per,
+                             "k": k, "niveles": niveles, "usado": usado}
+            if mejor is None:
+                break
+            capas.append({"ref": ref, "z": z, **mejor})
+            puestos[ref] = puestos.get(ref, 0) + mejor["k"]
+            z += mejor["usado"]
+            q -= mejor["k"]
+    return capas, puestos
+
+
+def empaquetar(pedido, articulos, cajas):
+    """pedido: lista de (referencia, cantidad). Devuelve lista de bultos."""
+    tipos = sorted(cajas, key=lambda c: c["vol"])
     grande = tipos[-1]
-    cap_grande = grande["vol"] * aprovechamiento
-
-    lineas = []
+    pend = {}
     for ref, cant in pedido:
         if ref not in articulos:
             raise ValueError(f"Referencia desconocida: {ref}")
-        vol = articulos[ref]["vol_ud"]
-        if vol > cap_grande + EPS:
+        pend[ref] = pend.get(ref, 0) + int(cant)
+    orden = sorted(pend, key=lambda r: articulos[r]["vol_ud"], reverse=True)
+    for ref in orden:
+        u = articulos[ref]["u"]
+        if not any(x <= grande["l"] + EPS and y <= grande["a"] + EPS and z <= grande["h"] + EPS
+                   for x, y, z in _orientaciones(u)):
             raise ValueError(f"{ref}: una unidad no cabe ni en la caja {grande['nombre']}.")
-        lineas.append((ref, int(cant), vol))
-    lineas.sort(key=lambda x: x[2], reverse=True)  # primero lo más voluminoso
 
-    abiertas = []
-    for ref, cant, vol in lineas:
-        for caja in abiertas:  # rellenar huecos de cajas ya abiertas
-            if cant == 0:
+    bultos = []
+    while any(pend[r] > 0 for r in orden):
+        items = [(r, pend[r], articulos[r]["u"]) for r in orden if pend[r] > 0]
+        capas, puestos = _llenar(grande, items)
+        if not puestos:
+            raise ValueError("No se ha podido colocar la mercancía.")
+        cont = [(r, puestos[r], articulos[r]["u"]) for r in orden if puestos.get(r)]
+        tipo = grande
+        for t in tipos[:-1]:  # la caja más pequeña donde cabe lo mismo
+            c2, p2 = _llenar(t, cont)
+            if all(p2.get(r) == q for r, q, _ in cont):
+                tipo, capas, puestos = t, c2, p2
                 break
-            caben = int((cap_grande - caja["usado"] + EPS) // vol)
-            n = min(caben, cant)
-            if n:
-                caja["contenido"][ref] = caja["contenido"].get(ref, 0) + n
-                caja["usado"] += n * vol
-                cant -= n
-        por_caja = int((cap_grande + EPS) // vol)
-        while cant:
-            n = min(por_caja, cant)
-            abiertas.append({"contenido": {ref: n}, "usado": n * vol})
-            cant -= n
-
-    resultado = []
-    for caja in abiertas:
-        tipo = next(t for t in tipos if caja["usado"] <= t["vol"] * aprovechamiento + EPS)
-        resultado.append({
-            "caja": tipo["nombre"],
-            "medidas": tipo["medidas"],
-            "capacidad": tipo["vol"],
-            "usado": caja["usado"],
-            "contenido": caja["contenido"],
-        })
-    return resultado
+        for r, q in puestos.items():
+            pend[r] -= q
+        usado = sum(q * articulos[r]["vol_ud"] for r, q in puestos.items())
+        bultos.append({"caja": tipo, "capas": capas, "contenido": puestos, "usado": usado})
+    return bultos
 
 
-def imprimir(resultado, articulos):
-    if not resultado:
+def colocacion(bulto, ref):
+    partes = []
+    for k in bulto["capas"]:
+        if k["ref"] != ref:
+            continue
+        llenos, resto = divmod(k["k"], k["per"])
+        t = f"{llenos} altura{'s' if llenos > 1 else ''} de {k['nx']}x{k['ny']}" if llenos else ""
+        if resto:
+            t += f" + {resto} encima" if t else f"1 capa de {resto} uds"
+        partes.append(t)
+    return " · ".join(partes)
+
+
+def imprimir(bultos, articulos, albaran="", pedido=""):
+    if not bultos:
         print("Pedido vacío.")
         return
-    print(f"\nTotal: {len(resultado)} caja(s)")
+    total = len(bultos)
+    print(f"\nAlbarán Ugari: {albaran or '-'}   Pedido cliente: {pedido or '-'}")
     resumen = {}
-    for c in resultado:
-        resumen[c["caja"]] = resumen.get(c["caja"], 0) + 1
-    print("  " + ", ".join(f"{n} x {k}" for k, n in resumen.items()))
-    for i, c in enumerate(resultado, 1):
-        llenado = 100 * c["usado"] / c["capacidad"]
-        print(f"\nCaja {i}: {c['caja']} ({c['medidas']} cm) - ocupación {llenado:.0f}%")
-        for ref, uds in c["contenido"].items():
-            print(f"   {uds:>5} x {ref}  {articulos[ref]['desc']}")
+    for b in bultos:
+        resumen[b["caja"]["nombre"]] = resumen.get(b["caja"]["nombre"], 0) + 1
+    print(f"Total: {total} bulto(s): " + ", ".join(f"{n} x {k}" for k, n in resumen.items()))
+    for i, b in enumerate(bultos, 1):
+        c = b["caja"]
+        llenado = 100 * b["usado"] / c["vol"]
+        print(f"\nBULTO {i}/{total}  caja {c['nombre']} ({c['l']:g}x{c['a']:g}x{c['h']:g} cm)  {llenado:.0f}% lleno")
+        print("  Colocar de abajo arriba:")
+        for j, (ref, uds) in enumerate(b["contenido"].items(), 1):
+            print(f"   {j}. {uds:>4} x {ref}  {articulos[ref]['desc']}  [{colocacion(b, ref)}]")
 
 
 # ---------- menú ----------
@@ -166,11 +228,10 @@ def pedir_pedido(articulos):
         if len(partes) != 2 or not partes[1].isdigit():
             print("Formato: REFERENCIA CANTIDAD")
             continue
-        ref = partes[0]
-        if ref not in articulos:
-            print(f"No existe la referencia {ref}.")
+        if partes[0] not in articulos:
+            print(f"No existe la referencia {partes[0]}.")
             continue
-        pedido.append((ref, int(partes[1])))
+        pedido.append((partes[0], int(partes[1])))
 
 
 def main():
@@ -179,7 +240,7 @@ def main():
     print(f"Cargados {len(articulos)} artículos y {len(cajas)} cajas de {os.path.basename(ruta)}")
     menu = """
 === EMPAQUETADO ===
-1. Calcular cajas de un pedido
+1. Calcular bultos de un pedido
 2. Ver artículos
 3. Ver cajas de envío
 4. Recargar Excel
@@ -188,13 +249,16 @@ def main():
     while True:
         op = input(menu).strip()
         if op == "1":
-            imprimir(empaquetar(pedir_pedido(articulos), articulos, cajas), articulos)
+            albaran = input("Nº albarán Ugari: ").strip()
+            pedido_cli = input("Nº pedido cliente: ").strip()
+            imprimir(empaquetar(pedir_pedido(articulos), articulos, cajas), articulos, albaran, pedido_cli)
         elif op == "2":
             for a in articulos.values():
-                print(f"{a['ref']:<14}{a['desc']:<35}{a['vol_ud']:>10.0f} cm³/ud")
+                u = " x ".join(f"{v:g}" for v in a["u"])
+                print(f"{a['ref']:<14}{a['desc']:<40} unidad {u} cm")
         elif op == "3":
             for c in sorted(cajas, key=lambda c: c["vol"]):
-                print(f"{c['nombre']:<14}{c['medidas']:<16}{c['vol']:>10.0f} cm³")
+                print(f"{c['nombre']:<8}{c['l']:g} x {c['a']:g} x {c['h']:g} cm")
         elif op == "4":
             articulos, cajas = leer_excel(ruta)
             print(f"Recargados {len(articulos)} artículos y {len(cajas)} cajas.")

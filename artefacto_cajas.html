@@ -79,7 +79,8 @@ tr.bad td{background:var(--warn-bg)}
 .label .refs small{font-size:.66rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
 .label .refs strong{font-family:var(--mono);font-size:.95rem;overflow-wrap:anywhere}
 .label .boxrow{display:flex;gap:12px;align-items:center;padding:12px;border-bottom:1px solid var(--line)}
-.label .boxrow svg{flex:0 0 112px;width:112px;height:auto}
+.label svg.iso{display:block;width:100%;height:auto;padding:10px 12px 0;box-sizing:border-box;border-bottom:1px solid var(--line)}
+.label .d.pl{color:var(--fg);font-weight:600}
 .label .dims{display:flex;flex-direction:column;gap:2px;min-width:0}
 .label .dims small{font-size:.66rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
 .label .dims strong{font-size:1.5rem;font-weight:800;font-variant-numeric:tabular-nums;line-height:1.1}
@@ -118,11 +119,8 @@ details .tbl{max-height:280px;overflow-y:auto;margin-top:10px}
         <label class="file" for="xls">Cargar Excel<input type="file" id="xls" accept=".xlsx,.xls"></label>
         <span class="note" id="origen"></span>
       </div>
-      <p class="note">Hoja de artículos: Referencia, Descripción, Largo, Ancho, Alto (cm de la caja del artículo), Uds por caja. Hoja de cajas: Caja, Largo, Ancho, Alto. Para ampliar productos, añade filas y vuelve a cargarlo. Se recuerda en este navegador.</p>
-      <div class="row">
-        <label for="aprov" class="note">Llenado máximo de cada caja</label>
-        <input type="number" id="aprov" min="50" max="100" value="90" style="width:70px"><span class="note">%</span>
-      </div>
+      <p class="note">Hoja de artículos: Referencia, Descripción, Largo, Ancho, Alto (cm de la caja del artículo), Uds por caja y, si las tienes, Largo ud, Ancho ud, Alto ud (medidas de una unidad; si faltan se estiman). Hoja de cajas: Caja, Largo, Ancho, Alto. Para ampliar productos, añade filas y vuelve a cargarlo. Se recuerda en este navegador.</p>
+      
     </section>
   </div>
 
@@ -168,7 +166,7 @@ const EJEMPLO = {
          ["EJ-002","EJEMPLO Empapador 60x90 (paquete)",50,35,30,6],
          ["EJ-003","EJEMPLO Crema barrera 200 ml",30,20,15,24],
          ["EJ-004","EJEMPLO Guantes nitrilo (caja 100)",50,25,25,10]],
-  cajas: [["EJ Pequeña",30,20,20],["EJ Mediana",40,30,30],["EJ Grande",60,40,40]],
+  cajas: [["S",35,30,30],["M",40,30,30],["L",60,40,40],["XL",80,60,50]],
   doc: {albaran:"EJEMPLO-0001", pedido:"EJ-PED-77", proveedor:"El Corte Inglés", fecha:""},
   lineas: [["EJ-001","",6],["EJ-002","",5],["EJ-003","",30],["EJ-004","",3]]
 };
@@ -177,14 +175,17 @@ const $ = id => document.getElementById(id);
 const num = v => (v === null || v === undefined || v === "") ? null : parseFloat(String(v).replace(",", "."));
 const col = (cab, ...k) => cab.findIndex(c => k.some(x => String(c ?? "").toLowerCase().includes(x)));
 const fmt = n => Math.round(n).toLocaleString("es-ES");
+const cm = n => (Math.round(n*10)/10).toLocaleString("es-ES");
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const norm = s => String(s ?? "").toUpperCase().replace(/[\s.\-_/]/g, "");
 
 /* ---------- maestro ---------- */
 function cargarMaestro(arts, cajas){
   ARTS = {}; CAJAS = [];
-  for (const [ref, desc, l, a, h, uds] of arts)
-    ARTS[ref] = {ref, desc, l, a, h, uds:uds||1, vol_ud: l*a*h/(uds||1)};
+  for (const [ref, desc, l, a, h, uds, ul, ua, uh] of arts){
+    ARTS[ref] = {ref, desc, l, a, h, uds:uds||1, ul, ua, uh, vol_ud: l*a*h/(uds||1)};
+    ARTS[ref].u = dimsUnidad(ARTS[ref]);
+  }
   for (const [nombre, l, a, h] of cajas) CAJAS.push({nombre, l, a, h, vol:l*a*h});
   pintarMaestro();
 }
@@ -205,9 +206,12 @@ function leerLibro(wb){
     const iRef = col(cab,"ref","código","codigo");
     if (iRef >= 0){
       const iD = col(cab,"desc","nombre"), iU = col(cab,"uds","unidades","cantidad");
+      const colUd = k => cab.findIndex(c => { const t = String(c ?? "").toLowerCase(); return t.includes(k) && /\bud\b|unidad/.test(t); });
+      const uL = colUd("largo"), uA = colUd("ancho"), uH = colUd("alto");
       for (const f of filas.slice(1)){
         if (f[iRef] === undefined || f[iRef] === "") continue;
-        arts.push([String(f[iRef]).trim(), iD>=0 ? String(f[iD]??"") : "", num(f[iL]), num(f[iA]), num(f[iH]), iU>=0 ? num(f[iU]) : 1]);
+        arts.push([String(f[iRef]).trim(), iD>=0 ? String(f[iD]??"") : "", num(f[iL]), num(f[iA]), num(f[iH]), iU>=0 ? num(f[iU]) : 1,
+          uL>=0 ? num(f[uL]) : null, uA>=0 ? num(f[uA]) : null, uH>=0 ? num(f[uH]) : null]);
       }
     } else {
       let iN = col(cab,"caja","nombre","tipo"); if (iN < 0) iN = 0;
@@ -224,8 +228,8 @@ function leerLibro(wb){
 function pintarMaestro(){
   $("tCajas").innerHTML = "<tr><th>Caja de envío</th><th>Medidas (cm)</th><th>Volumen (cm³)</th></tr>" +
     [...CAJAS].sort((a,b)=>a.vol-b.vol).map(c=>`<tr><td>${esc(c.nombre)}</td><td class="n">${c.l} × ${c.a} × ${c.h}</td><td class="n">${fmt(c.vol)}</td></tr>`).join("");
-  $("tArt").innerHTML = "<tr><th>Ref.</th><th>Descripción</th><th>Caja art. (cm)</th><th>Uds</th><th>cm³/ud</th></tr>" +
-    Object.values(ARTS).map(a=>`<tr><td>${esc(a.ref)}</td><td>${esc(a.desc)}</td><td class="n">${a.l} × ${a.a} × ${a.h}</td><td class="n">${a.uds}</td><td class="n">${fmt(a.vol_ud)}</td></tr>`).join("");
+  $("tArt").innerHTML = "<tr><th>Ref.</th><th>Descripción</th><th>Caja art. (cm)</th><th>Uds</th><th>Unidad (cm)</th></tr>" +
+    Object.values(ARTS).map(a=>`<tr><td>${esc(a.ref)}</td><td>${esc(a.desc)}</td><td class="n">${a.l} × ${a.a} × ${a.h}</td><td class="n">${a.uds}</td><td class="n">${a.u.map(cm).join(" × ")}${a.ul&&a.ua&&a.uh?"":" (estimada)"}</td></tr>`).join("");
   $("refsList").innerHTML = Object.values(ARTS).map(a=>`<option value="${esc(a.ref)}">${esc(a.desc)}</option>`).join("");
 }
 
@@ -262,48 +266,119 @@ function colorDe(ref){
   return COLORES[ORDEN_COLOR[ref] % COLORES.length];
 }
 
-/* ---------- empaquetado (mismo algoritmo que empaquetado.py) ---------- */
-function empaquetar(pedido, aprov){
-  const tipos = [...CAJAS].sort((a,b)=>a.vol-b.vol);
-  const grande = tipos[tipos.length-1], cap = grande.vol*aprov;
-  const lineas = pedido.map(([ref,cant]) => {
-    const vol = ARTS[ref].vol_ud;
-    if (vol > cap + EPS) throw new Error(`${ref}: una unidad no cabe ni en la caja ${grande.nombre}.`);
-    return [ref, cant, vol];
-  }).sort((a,b)=>b[2]-a[2]);
-  const abiertas = [];
-  for (let [ref, cant, vol] of lineas){
-    for (const c of abiertas){
-      if (!cant) break;
-      const n = Math.min(Math.floor((cap - c.usado + EPS)/vol), cant);
-      if (n){ c.contenido[ref] = (c.contenido[ref]||0)+n; c.usado += n*vol; cant -= n; }
+/* ---------- empaquetado geométrico (mismo algoritmo que empaquetado.py) ----------
+   Cada unidad es un bloque (medidas de la unidad o, si no están, la caja del artículo
+   dividida entre sus unidades). Se colocan por capas: rejilla nx × ny en el suelo,
+   varias alturas, y la siguiente referencia encima. */
+function dimsUnidad(a){
+  if (a.ul && a.ua && a.uh) return [a.ul, a.ua, a.uh];
+  const d = [a.l, a.a, a.h]; let n = Math.round(a.uds) || 1;
+  const fs = []; for (let p = 2; n > 1;){ if (n % p === 0){ fs.push(p); n /= p; } else p++; }
+  fs.sort((x,y) => y-x);
+  for (const p of fs){ const i = d.indexOf(Math.max(...d)); d[i] /= p; }
+  return d;
+}
+function orientaciones([a,b,c]){
+  const vistas = new Set(), out = [];
+  for (const o of [[a,b,c],[a,c,b],[b,a,c],[b,c,a],[c,a,b],[c,b,a]]){ const k = o.join(); if (!vistas.has(k)){ vistas.add(k); out.push(o); } }
+  return out;
+}
+function llenar(tipo, items){
+  let z = 0; const capas = [], puestos = {};
+  for (const it of items){
+    let q = it.q;
+    while (q > 0){
+      let mejor = null;
+      for (const [ox,oy,oz] of orientaciones(it.u)){
+        const nx = Math.floor(tipo.l/ox + EPS), ny = Math.floor(tipo.a/oy + EPS), per = nx*ny;
+        const alt = Math.floor((tipo.h - z)/oz + EPS);
+        if (!per || alt < 1) continue;
+        const k = Math.min(q, per*alt), niveles = Math.ceil(k/per), usado = niveles*oz;
+        if (!mejor || k > mejor.k || (k === mejor.k && usado < mejor.usado)) mejor = {o:[ox,oy,oz], nx, ny, per, k, niveles, usado};
+      }
+      if (!mejor) break;
+      capas.push({ref:it.ref, z, ...mejor});
+      puestos[it.ref] = (puestos[it.ref]||0) + mejor.k;
+      z += mejor.usado; q -= mejor.k;
     }
-    const porCaja = Math.floor((cap+EPS)/vol);
-    while (cant){ const n = Math.min(porCaja, cant); abiertas.push({contenido:{[ref]:n}, usado:n*vol}); cant -= n; }
   }
-  return abiertas.map(c => ({tipo: tipos.find(t => c.usado <= t.vol*aprov + EPS), usado:c.usado, contenido:c.contenido}));
+  return {capas, puestos, z};
+}
+function empaquetar(pedido){
+  const tipos = [...CAJAS].sort((a,b)=>a.vol-b.vol), grande = tipos[tipos.length-1];
+  const items = pedido.map(([ref,q]) => ({ref, q, u:ARTS[ref].u, vol:ARTS[ref].vol_ud})).sort((a,b)=>b.vol-a.vol);
+  for (const it of items)
+    if (!orientaciones(it.u).some(([x,y,z]) => x <= grande.l+EPS && y <= grande.a+EPS && z <= grande.h+EPS))
+      throw new Error(`${it.ref}: una unidad (${it.u.map(cm).join(" × ")} cm) no cabe ni en la caja ${grande.nombre}.`);
+  const res = [];
+  while (items.some(i => i.q > 0)){
+    const r = llenar(grande, items.filter(i => i.q > 0));
+    if (!Object.keys(r.puestos).length) throw new Error("No se ha podido colocar la mercancía.");
+    const cont = items.filter(i => r.puestos[i.ref]).map(i => ({...i, q:r.puestos[i.ref]}));
+    let elegido = {tipo:grande, ...r};
+    for (const t of tipos){
+      if (t === grande) break;
+      const r2 = llenar(t, cont);
+      if (cont.every(i => r2.puestos[i.ref] === i.q)){ elegido = {tipo:t, ...r2}; break; }
+    }
+    items.forEach(i => { i.q -= r.puestos[i.ref] || 0; });
+    const usado = Object.entries(elegido.puestos).reduce((s,[ref,u]) => s + u*ARTS[ref].vol_ud, 0);
+    res.push({tipo:elegido.tipo, capas:elegido.capas, contenido:elegido.puestos, usado});
+  }
+  return res;
+}
+function colocacion(c, ref){
+  return c.capas.filter(k => k.ref === ref).map(k => {
+    const llenos = Math.floor(k.k / k.per), resto = k.k % k.per;
+    let t = llenos ? `${llenos} altura${llenos>1?"s":""} de ${k.nx}×${k.ny}` : "";
+    if (resto) t += t ? ` + ${resto} encima` : `1 capa de ${resto} uds`;
+    return t;
+  }).join(" · ");
 }
 
-/* caja isométrica con el contenido apilado por referencia */
-function cajaSVG(caja){
-  const W=112, H=106, x0=10, y0=30, w=60, d=26, h=56;   // frente w×h, fondo d en diagonal
-  const capas = []; let acum = 0;
-  for (const [ref,u] of Object.entries(caja.contenido)){
-    const frac = u*ARTS[ref].vol_ud / caja.tipo.vol;
-    capas.push({ref, y: acum, f: frac}); acum += frac;
+/* ---------- dibujo a escala (cm), común para SVG y PDF ---------- */
+const PROY = (x,y,z) => [x + y*0.45, -(z + y*0.28)];
+function marco(){   // tamaño del dibujo de la caja más grande: misma escala para todas
+  const L = Math.max(...CAJAS.map(c=>c.l)), A = Math.max(...CAJAS.map(c=>c.a)), H = Math.max(...CAJAS.map(c=>c.h));
+  return {w: L + A*0.45, h: H + A*0.28};
+}
+function aclarar(hex, f){ return "#" + rgb(hex).map(v => Math.round(f > 1 ? v + (255-v)*(f-1) : v*f).toString(16).padStart(2,"0")).join(""); }
+function escena(c){
+  const T = c.tipo, P = PROY, fondo = [], bloques = [], aristas = [];
+  fondo.push([P(0,T.a,0),P(T.l,T.a,0),P(T.l,T.a,T.h),P(0,T.a,T.h)]);
+  fondo.push([P(0,0,0),P(0,T.a,0),P(0,T.a,T.h),P(0,0,T.h)]);
+  fondo.push([P(0,0,0),P(T.l,0,0),P(T.l,T.a,0),P(0,T.a,0)]);
+  const unidades = [], orden = Object.keys(c.contenido);
+  for (const k of c.capas){
+    const [dx,dy,dz] = k.o;
+    for (let i = 0; i < k.k; i++){
+      const lvl = Math.floor(i/k.per), idx = i % k.per, ix = idx % k.nx, iy = Math.floor(idx/k.nx);
+      unidades.push({ref:k.ref, n:orden.indexOf(k.ref)+1, x:ix*dx, y:iy*dy, z:k.z+lvl*dz, dx, dy, dz, delante: iy === 0});
+    }
   }
-  const fy = v => y0 + h - v*h;
-  let rel = capas.map(c => `<rect x="${x0}" y="${fy(c.y+c.f).toFixed(1)}" width="${w}" height="${(c.f*h).toFixed(1)}" fill="${colorDe(c.ref)}"/>
-      <polygon points="${x0+w},${fy(c.y+c.f)} ${x0+w+d},${fy(c.y+c.f)-d*0.6} ${x0+w+d},${fy(c.y)-d*0.6} ${x0+w},${fy(c.y)}" fill="${colorDe(c.ref)}" opacity=".75"/>`).join("");
-  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Ocupación ${Math.round(acum*100)}%">
-    <polygon points="${x0},${y0} ${x0+d},${y0-d*0.6} ${x0+w+d},${y0-d*0.6} ${x0+w},${y0}" fill="var(--kraft-soft)" stroke="var(--kraft-dark)" stroke-width="1.5"/>
-    <rect x="${x0}" y="${y0}" width="${w}" height="${h}" fill="var(--kraft-soft)"/>
-    <polygon points="${x0+w},${y0} ${x0+w+d},${y0-d*0.6} ${x0+w+d},${y0+h-d*0.6} ${x0+w},${y0+h}" fill="var(--kraft-soft)"/>
-    ${rel}
-    ${capas.map((c,j)=> c.f*h >= 9 ? `<text x="${x0+w/2}" y="${(fy(c.y+c.f/2)+4).toFixed(1)}" text-anchor="middle" font-size="11" font-weight="800" font-family="Archivo, sans-serif" fill="#fff">${j+1}</text>` : "").join("")}
-    <rect x="${x0}" y="${y0}" width="${w}" height="${h}" fill="none" stroke="var(--kraft-dark)" stroke-width="1.5"/>
-    <polygon points="${x0+w},${y0} ${x0+w+d},${y0-d*0.6} ${x0+w+d},${y0+h-d*0.6} ${x0+w},${y0+h}" fill="none" stroke="var(--kraft-dark)" stroke-width="1.5"/>
-    <text x="${x0+w/2}" y="${y0+h+14}" text-anchor="middle" font-size="11" font-family="IBM Plex Mono, monospace" fill="var(--muted)">${Math.round(acum*100)}% lleno</text>
+  unidades.sort((a,b) => (b.y-a.y) || (a.z-b.z) || (a.x-b.x));
+  for (const u of unidades){
+    const {x,y,z,dx,dy,dz} = u, col = colorDe(u.ref);
+    bloques.push({pts:[P(x,y,z+dz),P(x+dx,y,z+dz),P(x+dx,y+dy,z+dz),P(x,y+dy,z+dz)], fill:aclarar(col,1.35)});
+    bloques.push({pts:[P(x+dx,y,z),P(x+dx,y+dy,z),P(x+dx,y+dy,z+dz),P(x+dx,y,z+dz)], fill:aclarar(col,0.75)});
+    bloques.push({pts:[P(x,y,z),P(x+dx,y,z),P(x+dx,y,z+dz),P(x,y,z+dz)], fill:col,
+      label: u.delante ? {n:u.n, at:P(x+dx/2, y, z+dz/2), size:Math.min(dz*0.6, dx*0.55, 6)} : null});
+  }
+  aristas.push([P(0,0,0),P(T.l,0,0),P(T.l,0,T.h),P(0,0,T.h),P(0,0,0)]);
+  aristas.push([P(T.l,0,0),P(T.l,T.a,0),P(T.l,T.a,T.h),P(T.l,0,T.h)]);
+  aristas.push([P(0,0,T.h),P(0,T.a,T.h),P(T.l,T.a,T.h)]);
+  return {fondo, bloques, aristas};
+}
+
+function cajaSVG(c){
+  const m = marco(), e = escena(c), pad = 2;
+  const pt = p => `${p[0].toFixed(2)},${p[1].toFixed(2)}`;
+  const llen = Math.round(100*c.usado/c.tipo.vol);
+  return `<svg class="iso" viewBox="${-pad} ${-(m.h+pad)} ${m.w+2*pad} ${m.h+2*pad+7}" role="img" aria-label="Caja ${esc(c.tipo.nombre)} con su contenido, ${llen}% lleno">
+    ${e.fondo.map(f=>`<polygon points="${f.map(pt).join(" ")}" fill="var(--kraft-soft)" stroke="var(--kraft-dark)" stroke-width=".3" stroke-dasharray="1 .8"/>`).join("")}
+    ${e.bloques.map(b=>`<polygon points="${b.pts.map(pt).join(" ")}" fill="${b.fill}" stroke="rgba(0,0,0,.35)" stroke-width=".18"/>${b.label && b.label.size >= 2.2 ? `<text x="${b.label.at[0].toFixed(2)}" y="${(b.label.at[1]+b.label.size*0.36).toFixed(2)}" font-size="${b.label.size.toFixed(2)}" text-anchor="middle" font-weight="800" font-family="Archivo, sans-serif" fill="#fff">${b.label.n}</text>` : ""}`).join("")}
+    ${e.aristas.map(a=>`<polyline points="${a.map(pt).join(" ")}" fill="none" stroke="var(--kraft-dark)" stroke-width=".55"/>`).join("")}
+    <text x="0" y="5.5" font-size="4" font-family="IBM Plex Mono, monospace" fill="var(--muted)">${esc(c.tipo.nombre)} · ${c.tipo.l}×${c.tipo.a}×${c.tipo.h} cm · ${llen}% lleno</text>
   </svg>`;
 }
 
@@ -317,10 +392,9 @@ function calcular(){
     if (k) pedido.push([k, l.cant]); else fuera.push(l.ref || "(sin referencia)");
   }
   if (!pedido.length){ out.innerHTML = '<p class="note">No hay líneas con referencia del maestro y cantidad.</p>'; return; }
-  const aprov = Math.min(100, Math.max(50, num($("aprov").value) || 90))/100;
   const alb = $("fAlb").value.trim() || "—", ped = $("fPed").value.trim() || "—", cli = $("fProv").value.trim() || "Cliente";
   try {
-    const res = empaquetar(pedido, aprov);
+    const res = empaquetar(pedido);
     const resumen = {};
     res.forEach(c => resumen[c.tipo.nombre] = (resumen[c.tipo.nombre]||0)+1);
     const total = res.length;
@@ -341,8 +415,8 @@ function calcular(){
             <div><small>Pedido ${esc(cli)}</small><strong>${esc(ped)}</strong></div>
             <div><small>Albarán Ugari</small><strong>${esc(alb)}</strong></div>
           </div>
+          ${cajaSVG(c)}
           <div class="boxrow">
-            ${cajaSVG(c)}
             <div class="dims"><small>Caja exterior (cm)</small>
               <strong>${c.tipo.l} × ${c.tipo.a} × ${c.tipo.h}</strong>
               <em>${Object.values(c.contenido).reduce((s,u)=>s+u,0)} uds · ${Object.keys(c.contenido).length} ref.</em></div>
@@ -350,7 +424,7 @@ function calcular(){
           <p class="orden">Colocar de abajo arriba:</p>
           <ul>${Object.entries(c.contenido).map(([r,u],j)=>`
             <li><span class="mk" style="background:${colorDe(r)}">${j+1}</span><span class="q">${u}</span>
-              <span><span class="r">${esc(r)}</span><span class="d">${esc(ARTS[r].desc)}</span></span></li>`).join("")}
+              <span><span class="r">${esc(r)}</span><span class="d">${esc(ARTS[r].desc)}</span><span class="d pl">${colocacion(c, r)}</span></span></li>`).join("")}
           </ul>
         </article>`).join("")}
       </div>`;
@@ -363,43 +437,27 @@ $("calc").onclick = calcular;
 const rgb = hex => [1,3,5].map(i => parseInt(hex.slice(i,i+2),16));
 let downloadsPromise = window.claude?.use ? window.claude.use("downloads") : Promise.resolve(null);
 
-function dibujarCaja(doc, c, x, y, w, h, d){
-  // x,y = esquina superior izquierda de la cara frontal; d = profundidad en diagonal
-  const dy = d*0.6, capas = []; let acum = 0;
-  Object.entries(c.contenido).forEach(([ref,u],j) => { const f = u*ARTS[ref].vol_ud/c.tipo.vol; capas.push({ref,j,y:acum,f}); acum += f; });
-  const fy = v => y + h - v*h;
-  doc.setDrawColor(90,60,30); doc.setLineWidth(0.5);
-  doc.setFillColor(234,217,192);
-  doc.lines([[d,-dy],[w,0],[-d,dy]], x, y, [1,1], "FD", true);          // tapa
-  doc.rect(x, y, w, h, "F");
-  doc.lines([[d,-dy],[0,h],[-d,dy]], x+w, y, [1,1], "F", true);          // lateral
-  for (const k of capas){
-    const col = rgb(colorDe(k.ref)), yt = fy(k.y+k.f), hh = k.f*h;
-    doc.setFillColor(...col); doc.rect(x, yt, w, hh, "F");
-    doc.setFillColor(...col.map(v => Math.round(v*0.78)));
-    doc.lines([[d,-dy],[0,hh],[-d,dy]], x+w, yt, [1,1], "F", true);
-    doc.setDrawColor(255,255,255); doc.setLineWidth(0.3); doc.line(x, yt, x+w, yt);
+function dibujarCaja(doc, c, x0, yBase, ancho, alto){
+  // dibuja la escena con la misma escala para todas las cajas; (x0, yBase) = esquina inferior izquierda del área
+  const m = marco(), s = Math.min(ancho/m.w, alto/m.h), e = escena(c);
+  const poly = (pts, style) => {
+    const a = pts.map(([X,Y]) => [x0 + X*s, yBase + Y*s]);
+    doc.lines(a.slice(1).map((p,i) => [p[0]-a[i][0], p[1]-a[i][1]]), a[0][0], a[0][1], [1,1], style, style !== "S");
+  };
+  doc.setLineWidth(0.2); doc.setDrawColor(150,120,80); doc.setFillColor(240,228,210);
+  e.fondo.forEach(f => poly(f, "FD"));
+  doc.setDrawColor(60,60,60); doc.setLineWidth(0.15);
+  for (const b of e.bloques){
+    doc.setFillColor(...rgb(b.fill)); poly(b.pts, "FD");
+    if (b.label && b.label.size*s >= 3.2){
+      doc.setTextColor(255,255,255); doc.setFont("helvetica","bold"); doc.setFontSize(Math.min(b.label.size*s*2.2, 14));
+      doc.text(String(b.label.n), x0 + b.label.at[0]*s, yBase + b.label.at[1]*s + b.label.size*s*0.3, {align:"center"});
+    }
   }
   doc.setDrawColor(90,60,30); doc.setLineWidth(0.6);
-  doc.rect(x, y, w, h, "S");
-  doc.lines([[d,-dy],[0,h],[-d,dy]], x+w, y, [1,1], "S", true);
-  doc.lines([[d,-dy],[w,0]], x, y, [1,1], "S", false);
-  // números de capa a la derecha, con línea a su capa
-  let ultimo = Infinity;
-  for (const k of capas){
-    const ym = fy(k.y+k.f/2);
-    let yl = Math.min(ym, ultimo - 9); ultimo = yl;
-    const xl = x+w+d+10;
-    doc.setDrawColor(60,60,60); doc.setLineWidth(0.3);
-    doc.line(x+w+d*0.5, ym - dy*0.5, xl-4, yl);
-    doc.setFillColor(...rgb(colorDe(k.ref))); doc.circle(xl, yl, 4, "F");
-    doc.setTextColor(255,255,255); doc.setFont("helvetica","bold"); doc.setFontSize(11);
-    doc.text(String(k.j+1), xl, yl+1.4, {align:"center"});
-    doc.setTextColor(20,20,20); doc.setFontSize(11);
-    doc.text(k.ref, xl+6, yl+1.4);
-  }
+  e.aristas.forEach(a => poly(a, "S"));
   doc.setTextColor(110,110,110); doc.setFont("helvetica","normal"); doc.setFontSize(9);
-  doc.text(`${Math.round(acum*100)}% lleno`, x+w/2, y+h+6, {align:"center"});
+  doc.text(`Caja ${c.tipo.nombre} dibujada a escala · ${Math.round(100*c.usado/c.tipo.vol)}% lleno`, x0, yBase + 6);
 }
 
 function crearPDF({res, alb, ped, cli}){
@@ -451,9 +509,9 @@ function crearPDF({res, alb, ped, cli}){
     doc.setFont("helvetica","normal"); doc.setFontSize(12);
     doc.text(`${uds} unidades · ${Object.keys(c.contenido).length} referencias`, M, M+71);
 
-    dibujarCaja(doc, c, M+10, M+100, 80, 60, 32);
+    dibujarCaja(doc, c, M+4, M+166, W-8, 88);
 
-    let y = M+178;
+    let y = M+180;
     doc.setFont("helvetica","bold"); doc.setFontSize(11); doc.setTextColor(20,20,20);
     doc.text("COLOCAR EN ESTE ORDEN, DE ABAJO ARRIBA (1 = fondo de la caja)", M, y); y += 4;
     const cab = () => {
@@ -474,7 +532,8 @@ function crearPDF({res, alb, ped, cli}){
       doc.text(String(u), M+28, y+7.8, {align:"right"});
       doc.setFontSize(13); doc.text(r, M+34, y+7.5);
       doc.setFont("helvetica","normal"); doc.setFontSize(9.5);
-      doc.text(doc.splitTextToSize(ARTS[r].desc, W-80-14).slice(0,2), M+80, y+5.5);
+      doc.text(doc.splitTextToSize(ARTS[r].desc, W-80-14).slice(0,1), M+80, y+5);
+      doc.setFont("helvetica","bold"); doc.text(doc.splitTextToSize(colocacion(c, r), W-80-14).slice(0,1), M+80, y+9.5);
       doc.setDrawColor(30,30,30); doc.setLineWidth(0.4); doc.rect(M+W-9, y+2.5, 6, 6);
       doc.setDrawColor(200,200,200); doc.line(M, y+12, M+W, y+12);
       y += 12;

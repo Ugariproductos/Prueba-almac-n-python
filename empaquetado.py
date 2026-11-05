@@ -5,7 +5,8 @@ Lee un Excel con dos hojas:
                [| Largo ud | Ancho ud | Alto ud]   (cm)
     Medidas de la caja del artículo y unidades que trae. Si se rellenan las
     medidas de una unidad se usan; si no, se estiman dividiendo la caja.
-  - Cajas:     Caja | Largo | Ancho | Alto   (cajas de envío, en cm)
+  - Cajas:     Caja | Largo | Ancho | Alto | Solo si no cabe   (cajas de envío, en cm)
+    "Solo si no cabe" = sí: esa caja (XL) solo se usa si una unidad no cabe en otra.
 
 Cada unidad es un bloque que se coloca por capas dentro de la caja: rejilla
 nx × ny en el suelo, varias alturas, y la siguiente referencia encima.
@@ -100,11 +101,18 @@ def leer_excel(ruta=EXCEL):
             i_nom = _col(cab, "caja", "nombre", "tipo")
             if i_nom is None:
                 i_nom = 0
+            i_solo = _col(cab, "solo", "oblig", "necesari")
             for f in filas[1:]:
                 if not f or f[i_nom] in (None, ""):
                     continue
                 l, a, h = _num(f[i_l]), _num(f[i_a]), _num(f[i_h])
-                cajas.append({"nombre": str(f[i_nom]).strip(), "l": l, "a": a, "h": h, "vol": l * a * h})
+                nombre = str(f[i_nom]).strip()
+                if i_solo is not None:
+                    solo = str(f[i_solo] or "").strip().lower() in ("sí", "si", "x", "1", "true", "yes")
+                else:
+                    solo = nombre.upper() == "XL"
+                cajas.append({"nombre": nombre, "l": l, "a": a, "h": h, "vol": l * a * h,
+                              "solo_si_no_cabe": solo})
     wb.close()
     if not articulos:
         raise ValueError("No encuentro la hoja de artículos (falta columna Referencia).")
@@ -147,10 +155,21 @@ def _llenar(caja, items):
     return capas, puestos
 
 
+def _cabe(u, caja):
+    return any(x <= caja["l"] + EPS and y <= caja["a"] + EPS and z <= caja["h"] + EPS
+               for x, y, z in _orientaciones(u))
+
+
 def empaquetar(pedido, articulos, cajas):
-    """pedido: lista de (referencia, cantidad). Devuelve lista de bultos."""
+    """pedido: lista de (referencia, cantidad). Devuelve lista de bultos.
+
+    Las cajas marcadas "solo si no cabe" (XL) solo se usan para unidades que no
+    caben en la caja normal más grande (L); el resto va en L o en una menor.
+    """
     tipos = sorted(cajas, key=lambda c: c["vol"])
-    grande = tipos[-1]
+    mayor = tipos[-1]
+    normales = [t for t in tipos if not t.get("solo_si_no_cabe")] or tipos
+    principal = normales[-1]
     pend = {}
     for ref, cant in pedido:
         if ref not in articulos:
@@ -158,28 +177,41 @@ def empaquetar(pedido, articulos, cajas):
         pend[ref] = pend.get(ref, 0) + int(cant)
     orden = sorted(pend, key=lambda r: articulos[r]["vol_ud"], reverse=True)
     for ref in orden:
-        u = articulos[ref]["u"]
-        if not any(x <= grande["l"] + EPS and y <= grande["a"] + EPS and z <= grande["h"] + EPS
-                   for x, y, z in _orientaciones(u)):
-            raise ValueError(f"{ref}: una unidad no cabe ni en la caja {grande['nombre']}.")
+        if not _cabe(articulos[ref]["u"], mayor):
+            raise ValueError(f"{ref}: una unidad no cabe ni en la caja {mayor['nombre']}.")
 
     bultos = []
-    while any(pend[r] > 0 for r in orden):
-        items = [(r, pend[r], articulos[r]["u"]) for r in orden if pend[r] > 0]
-        capas, puestos = _llenar(grande, items)
+
+    def meter(tipo, refs, candidatas):
+        items = [(r, pend[r], articulos[r]["u"]) for r in refs if pend[r] > 0]
+        capas, puestos = _llenar(tipo, items)
         if not puestos:
             raise ValueError("No se ha podido colocar la mercancía.")
         cont = [(r, puestos[r], articulos[r]["u"]) for r in orden if puestos.get(r)]
-        tipo = grande
-        for t in tipos[:-1]:  # la caja más pequeña donde cabe lo mismo
+        elegido = tipo
+        for t in candidatas:  # la caja más pequeña donde cabe lo mismo
+            if t["vol"] >= tipo["vol"]:
+                break
             c2, p2 = _llenar(t, cont)
             if all(p2.get(r) == q for r, q, _ in cont):
-                tipo, capas, puestos = t, c2, p2
+                elegido, capas, puestos = t, c2, p2
                 break
         for r, q in puestos.items():
             pend[r] -= q
         usado = sum(q * articulos[r]["vol_ud"] for r, q in puestos.items())
-        bultos.append({"caja": tipo, "capas": capas, "contenido": puestos, "usado": usado})
+        bultos.append({"caja": elegido, "capas": capas, "contenido": puestos, "usado": usado})
+
+    # 1) solo lo obligatorio va en caja grande (XL); el hueco que sobra se aprovecha
+    while True:
+        grandes = [r for r in orden if pend[r] > 0 and not _cabe(articulos[r]["u"], principal)]
+        if not grandes:
+            break
+        tipo = next(t for t in tipos if _cabe(articulos[grandes[0]]["u"], t))
+        resto = [r for r in orden if pend[r] > 0 and r not in grandes]
+        meter(tipo, grandes + resto, tipos)
+    # 2) el resto, en la caja normal más grande (L) o en una más pequeña si basta
+    while any(pend[r] > 0 for r in orden):
+        meter(principal, orden, normales)
     return bultos
 
 

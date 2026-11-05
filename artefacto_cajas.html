@@ -126,7 +126,7 @@ details .tbl{max-height:280px;overflow-y:auto;margin-top:10px}
         <label class="file" for="xls">Cargar Excel<input type="file" id="xls" accept=".xlsx,.xls"></label>
         <span class="note" id="origen"></span>
       </div>
-      <p class="note">Hoja de artículos: Referencia, Descripción, Largo, Ancho, Alto (cm de la caja del artículo), Uds por caja y, si las tienes, Largo ud, Ancho ud, Alto ud (medidas de una unidad; si faltan se estiman). Hoja de cajas: Caja, Largo, Ancho, Alto. Para ampliar productos, añade filas y vuelve a cargarlo. Se recuerda en este navegador.</p>
+      <p class="note">Hoja de artículos: Referencia, Descripción, Largo, Ancho, Alto (cm de la caja del artículo), Uds por caja y, si las tienes, Largo ud, Ancho ud, Alto ud (medidas de una unidad; si faltan se estiman). Hoja de cajas: Caja, Largo, Ancho, Alto y "Solo si no cabe" (sí en las cajas que solo se usan cuando no hay otra opción; si falta la columna, se aplica a XL). Para ampliar productos, añade filas y vuelve a cargarlo. Se recuerda en este navegador.</p>
       
     </section>
   </div>
@@ -182,7 +182,7 @@ const EJEMPLO = {
          ["EJ-002","EJEMPLO Empapador 60x90 (paquete)",50,35,30,6],
          ["EJ-003","EJEMPLO Crema barrera 200 ml",30,20,15,24],
          ["EJ-004","EJEMPLO Guantes nitrilo (caja 100)",50,25,25,10]],
-  cajas: [["S",35,30,30],["M",40,30,30],["L",60,40,40],["XL",80,60,50]],
+  cajas: [["S",35,30,30,false],["M",40,30,30,false],["L",60,40,40,false],["XL",80,60,50,true]],
   doc: {albaran:"EJEMPLO-0001", pedido:"EJ-PED-77", proveedor:"El Corte Inglés", fecha:""},
   lineas: [["EJ-001","",6],["EJ-002","",5],["EJ-003","",30],["EJ-004","",3]]
 };
@@ -202,7 +202,9 @@ function cargarMaestro(arts, cajas){
     ARTS[ref] = {ref, desc, l, a, h, uds:uds||1, ul, ua, uh, vol_ud: l*a*h/(uds||1)};
     ARTS[ref].u = dimsUnidad(ARTS[ref]);
   }
-  for (const [nombre, l, a, h] of cajas) CAJAS.push({nombre, l, a, h, vol:l*a*h});
+  const hayCol = cajas.some(c => c[4] !== undefined && c[4] !== null);
+  for (const [nombre, l, a, h, solo] of cajas)
+    CAJAS.push({nombre, l, a, h, vol:l*a*h, soloSiNoCabe: hayCol ? !!solo : /^xl$/i.test(nombre)});
   pintarMaestro();
 }
 function buscarRef(r){
@@ -231,9 +233,11 @@ function leerLibro(wb){
       }
     } else {
       let iN = col(cab,"caja","nombre","tipo"); if (iN < 0) iN = 0;
+      const iS = col(cab,"solo","oblig","necesari");
       for (const f of filas.slice(1)){
         if (f[iN] === undefined || f[iN] === "") continue;
-        cajas.push([String(f[iN]).trim(), num(f[iL]), num(f[iA]), num(f[iH])]);
+        cajas.push([String(f[iN]).trim(), num(f[iL]), num(f[iA]), num(f[iH]),
+          iS >= 0 ? /^(s[ií]|x|1|true|yes)$/i.test(String(f[iS] ?? "").trim()) : null]);
       }
     }
   }
@@ -320,27 +324,40 @@ function llenar(tipo, items){
   }
   return {capas, puestos, z};
 }
+const cabeEn = (u, t) => orientaciones(u).some(([x,y,z]) => x <= t.l+EPS && y <= t.a+EPS && z <= t.h+EPS);
+/* Las cajas marcadas "solo si no cabe" (XL) se usan únicamente para unidades que no caben
+   en la caja normal más grande (L); el resto va en L o en una más pequeña. */
 function empaquetar(pedido){
-  const tipos = [...CAJAS].sort((a,b)=>a.vol-b.vol), grande = tipos[tipos.length-1];
+  const tipos = [...CAJAS].sort((a,b)=>a.vol-b.vol), mayor = tipos[tipos.length-1];
+  let normales = tipos.filter(t => !t.soloSiNoCabe); if (!normales.length) normales = tipos;
+  const principal = normales[normales.length-1];
   const items = pedido.map(([ref,q]) => ({ref, q, u:ARTS[ref].u, vol:ARTS[ref].vol_ud})).sort((a,b)=>b.vol-a.vol);
   for (const it of items)
-    if (!orientaciones(it.u).some(([x,y,z]) => x <= grande.l+EPS && y <= grande.a+EPS && z <= grande.h+EPS))
-      throw new Error(`${it.ref}: una unidad (${it.u.map(cm).join(" × ")} cm) no cabe ni en la caja ${grande.nombre}.`);
+    if (!cabeEn(it.u, mayor))
+      throw new Error(`${it.ref}: una unidad (${it.u.map(cm).join(" × ")} cm) no cabe ni en la caja ${mayor.nombre}.`);
   const res = [];
-  while (items.some(i => i.q > 0)){
-    const r = llenar(grande, items.filter(i => i.q > 0));
+  const meter = (tipo, lista, candidatas) => {
+    const r = llenar(tipo, lista);
     if (!Object.keys(r.puestos).length) throw new Error("No se ha podido colocar la mercancía.");
     const cont = items.filter(i => r.puestos[i.ref]).map(i => ({...i, q:r.puestos[i.ref]}));
-    let elegido = {tipo:grande, ...r};
-    for (const t of tipos){
-      if (t === grande) break;
+    let elegido = {tipo, ...r};
+    for (const t of candidatas){
+      if (t.vol >= tipo.vol) break;
       const r2 = llenar(t, cont);
       if (cont.every(i => r2.puestos[i.ref] === i.q)){ elegido = {tipo:t, ...r2}; break; }
     }
     items.forEach(i => { i.q -= r.puestos[i.ref] || 0; });
     const usado = Object.entries(elegido.puestos).reduce((s,[ref,u]) => s + u*ARTS[ref].vol_ud, 0);
     res.push({tipo:elegido.tipo, capas:elegido.capas, contenido:elegido.puestos, usado});
+  };
+  // 1) solo lo obligatorio va en caja grande (XL); el hueco que sobra se aprovecha
+  while (items.some(i => i.q > 0 && !cabeEn(i.u, principal))){
+    const grandes = items.filter(i => i.q > 0 && !cabeEn(i.u, principal));
+    const tipo = tipos.find(t => cabeEn(grandes[0].u, t));
+    meter(tipo, [...grandes, ...items.filter(i => i.q > 0 && cabeEn(i.u, principal))], tipos);
   }
+  // 2) el resto, en la caja normal más grande (L) o en una más pequeña si basta
+  while (items.some(i => i.q > 0)) meter(principal, items.filter(i => i.q > 0), normales);
   return res;
 }
 function colocacion(c, ref){

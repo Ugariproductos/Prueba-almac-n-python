@@ -60,6 +60,13 @@ th{font-weight:600;color:var(--muted);font-size:.72rem;text-transform:uppercase;
 td input{width:100%}
 td.n{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap}
 tr.bad td{background:var(--warn-bg)}
+#tReg tr.fila{cursor:pointer}
+#tReg tr.fila:hover td{background:var(--kraft-soft)}
+#tReg tr.det td{background:var(--bg);white-space:normal}
+.det-b{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px;margin:6px 0}
+.det-b div{border:1px solid var(--line);border-radius:4px;padding:8px;background:var(--panel)}
+.det-b b{display:block;margin-bottom:4px}
+.det-b span{display:block;font-size:.84rem;font-family:var(--mono)}
 .x{padding:2px 8px;background:transparent;color:var(--muted);border:1px solid var(--line)}
 .dot{display:inline-block;width:10px;height:10px;border-radius:2px;vertical-align:middle}
 
@@ -130,7 +137,7 @@ details .tbl{max-height:280px;overflow-y:auto;margin-top:10px}
       <div class="field"><label for="fAlb">Nº albarán Ugari</label><input id="fAlb"></div>
       <div class="field"><label for="fPed">Nº pedido cliente</label><input id="fPed"></div>
       <div class="field"><label for="fProv">Cliente</label><input id="fProv" value="El Corte Inglés"></div>
-      <div class="field"><label for="fFecha">Fecha</label><input id="fFecha"></div>
+      <div class="field"><label for="fFecha">Fecha albarán</label><input id="fFecha" type="date"></div>
     </div>
     <div class="tbl"><table id="tLineas"></table></div>
     <div class="row" style="margin-top:10px">
@@ -143,6 +150,15 @@ details .tbl{max-height:280px;overflow-y:auto;margin-top:10px}
   <section>
     <h2>3 · Bultos</h2>
     <div id="out"></div>
+  </section>
+
+  <section id="regSec">
+    <h2>4 · Registro de envíos</h2>
+    <div class="row" style="margin-bottom:10px">
+      <input id="regBuscar" type="search" placeholder="Buscar pedido, albarán o referencia" style="flex:1 1 260px" aria-label="Buscar en el registro">
+      <span id="regEstado" class="note">Cargando registro…</span>
+    </div>
+    <div class="tbl"><table id="tReg"></table></div>
   </section>
 
   <section>
@@ -382,6 +398,15 @@ function cajaSVG(c){
   </svg>`;
 }
 
+const DESC_EXTRA = {};
+const descDe = r => ARTS[r]?.desc ?? DESC_EXTRA[r] ?? "";
+const datosDoc = () => ({alb: $("fAlb").value.trim() || "—", ped: $("fPed").value.trim() || "—",
+  cli: $("fProv").value.trim() || "Cliente", fecha: $("fFecha").value || ""});
+const aISO = t => { t = String(t||"").trim(); if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;
+  const m = t.match(/^(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2,4})$/); if (!m) return "";
+  const y = m[3].length === 2 ? "20"+m[3] : m[3]; return `${y}-${m[2].padStart(2,"0")}-${m[1].padStart(2,"0")}`; };
+const fechaES = iso => /^\d{4}-\d{2}-\d{2}$/.test(iso||"") ? iso.split("-").reverse().join("/") : (iso || "—");
+
 function calcular(){
   const out = $("out");
   if (!CAJAS.length){ out.innerHTML = '<p class="err">Carga el Excel con las cajas de envío.</p>'; return; }
@@ -392,19 +417,24 @@ function calcular(){
     if (k) pedido.push([k, l.cant]); else fuera.push(l.ref || "(sin referencia)");
   }
   if (!pedido.length){ out.innerHTML = '<p class="note">No hay líneas con referencia del maestro y cantidad.</p>'; return; }
-  const alb = $("fAlb").value.trim() || "—", ped = $("fPed").value.trim() || "—", cli = $("fProv").value.trim() || "Cliente";
   try {
-    const res = empaquetar(pedido);
-    const resumen = {};
-    res.forEach(c => resumen[c.tipo.nombre] = (resumen[c.tipo.nombre]||0)+1);
-    const total = res.length;
-    ULTIMO = {res, alb, ped, cli};
-    out.innerHTML = `
+    pintarResultado({res: empaquetar(pedido), ...datosDoc(), fuera, guardado:false});
+  } catch(e){ ULTIMO = null; out.innerHTML = `<p class="err">${esc(e.message)}</p>`; }
+}
+
+function pintarResultado(r){
+  ULTIMO = r;
+  const {res, alb, ped, cli, fecha, fuera = []} = r;
+  const resumen = {};
+  res.forEach(c => resumen[c.tipo.nombre] = (resumen[c.tipo.nombre]||0)+1);
+  const total = res.length;
+  $("out").innerHTML = `
       <div class="summary">
         <div class="big"><b>${total}</b><span>bulto${total>1?"s":""}</span></div>
         ${Object.entries(resumen).map(([k,n])=>`<span class="chip">${n} × ${esc(k)}</span>`).join("")}
-        <span class="note">Albarán Ugari ${esc(alb)} · Pedido ${esc(cli)} ${esc(ped)}</span>
+        <span class="note">Albarán Ugari ${esc(alb)} · Pedido ${esc(cli)} ${esc(ped)} · ${esc(fechaES(fecha))}</span>
         <button id="pdfBtn">Descargar hoja para almacén (PDF)</button>
+        <button id="saveBtn" class="ghost">${r.guardado ? "Guardado en el registro" : "Guardar en el registro"}</button>
         <span id="pdfEstado" class="note"></span>
       </div>
       ${fuera.length ? `<p class="err">No incluidas (no están en el maestro): ${fuera.map(esc).join(", ")}</p>` : ""}
@@ -424,12 +454,13 @@ function calcular(){
           <p class="orden">Colocar de abajo arriba:</p>
           <ul>${Object.entries(c.contenido).map(([r,u],j)=>`
             <li><span class="mk" style="background:${colorDe(r)}">${j+1}</span><span class="q">${u}</span>
-              <span><span class="r">${esc(r)}</span><span class="d">${esc(ARTS[r].desc)}</span><span class="d pl">${colocacion(c, r)}</span></span></li>`).join("")}
+              <span><span class="r">${esc(r)}</span><span class="d">${esc(descDe(r))}</span><span class="d pl">${colocacion(c, r)}</span></span></li>`).join("")}
           </ul>
         </article>`).join("")}
       </div>`;
-    $("pdfBtn").onclick = descargarPDF;
-  } catch(e){ ULTIMO = null; out.innerHTML = `<p class="err">${esc(e.message)}</p>`; }
+  $("pdfBtn").onclick = descargarPDF;
+  $("saveBtn").onclick = guardarRegistro;
+  $("saveBtn").hidden = !DB;
 }
 $("calc").onclick = calcular;
 
@@ -532,7 +563,7 @@ function crearPDF({res, alb, ped, cli}){
       doc.text(String(u), M+28, y+7.8, {align:"right"});
       doc.setFontSize(13); doc.text(r, M+34, y+7.5);
       doc.setFont("helvetica","normal"); doc.setFontSize(9.5);
-      doc.text(doc.splitTextToSize(ARTS[r].desc, W-80-14).slice(0,1), M+80, y+5);
+      doc.text(doc.splitTextToSize(descDe(r), W-80-14).slice(0,1), M+80, y+5);
       doc.setFont("helvetica","bold"); doc.text(doc.splitTextToSize(colocacion(c, r), W-80-14).slice(0,1), M+80, y+9.5);
       doc.setDrawColor(30,30,30); doc.setLineWidth(0.4); doc.rect(M+W-9, y+2.5, 6, 6);
       doc.setDrawColor(200,200,200); doc.line(M, y+12, M+W, y+12);
@@ -548,6 +579,7 @@ async function descargarPDF(){
   const est = $("pdfEstado");
   if (!ULTIMO) return;
   if (!window.jspdf){ est.innerHTML = '<span class="err">No se ha cargado el generador de PDF. Recarga la página.</span>'; return; }
+  Object.assign(ULTIMO, datosDoc());
   const doc = crearPDF(ULTIMO);
   const nombre = `Preparacion_${(ULTIMO.alb||"albaran").replace(/[^\w\-]+/g,"_")}.pdf`;
   const dl = await downloadsPromise;
@@ -555,6 +587,105 @@ async function descargarPDF(){
   try { await dl.save({filename: nombre, data: doc.output("blob")}); est.innerHTML = '<span class="ok">PDF listo para imprimir.</span>'; }
   catch(e){ est.innerHTML = e?.code === "cancelled" || e?.code === "declined" ? "" : `<span class="err">No se pudo descargar el PDF.</span>`; }
 }
+
+/* ---------- registro de envíos (db) ---------- */
+let DB = null, REGISTROS = [], ABIERTO = null;
+const idDoc = a => String(a).trim().replace(/[^A-Za-z0-9_\-.~:@+]+/g, "_").replace(/^\.+/, "_").slice(0, 120) || "sin_numero";
+
+async function iniciarRegistro(){
+  const est = $("regEstado");
+  DB = window.claude?.use ? await window.claude.use("db") : null;
+  if (!DB){ est.textContent = "El registro no está disponible en esta vista."; $("tReg").innerHTML = ""; if ($("saveBtn")) $("saveBtn").hidden = true; return; }
+  if ($("saveBtn")) $("saveBtn").hidden = false;
+  const t = setTimeout(() => { est.textContent = "El registro tarda en responder…"; }, 10000);
+  DB.collection("envios").orderBy("fecha_albaran", "desc").onSnapshot(snap => {
+    clearTimeout(t);
+    REGISTROS = snap.docs.map(d => ({id:d.id, ...d.data()}));
+    pintarRegistro();
+  }, e => { clearTimeout(t); est.innerHTML = `<span class="err">No se pudo leer el registro (${esc(e.code||"error")}).</span>`; });
+}
+
+function pintarRegistro(){
+  const q = norm($("regBuscar").value);
+  const lista = REGISTROS.filter(r => !q || norm([r.pedido_cliente, r.albaran, ...(r.bultos||[]).flatMap(b => b.contenido.map(x => x.ref))].join(" ")).includes(q));
+  $("regEstado").textContent = REGISTROS.length ? `${lista.length} de ${REGISTROS.length} envíos` : "";
+  if (!REGISTROS.length){ $("tReg").innerHTML = '<tr><td class="note">Todavía no hay envíos guardados. Calcula un albarán y pulsa «Guardar en el registro».</td></tr>'; return; }
+  $("tReg").innerHTML = "<tr><th>Fecha albarán</th><th>Pedido cliente</th><th>Albarán Ugari</th><th>Cliente</th><th>Bultos</th><th>Cajas</th><th>Uds</th></tr>" +
+    lista.map(r => {
+      const cajas = {}; (r.bultos||[]).forEach(b => cajas[b.caja] = (cajas[b.caja]||0)+1);
+      const uds = (r.bultos||[]).reduce((s,b) => s + b.contenido.reduce((t,x) => t + x.uds, 0), 0);
+      const fila = `<tr class="fila" data-id="${esc(r.id)}" tabindex="0"><td class="n">${esc(fechaES(r.fecha_albaran))}</td><td><b>${esc(r.pedido_cliente)}</b></td><td>${esc(r.albaran)}</td><td>${esc(r.cliente)}</td>
+        <td class="n">${(r.bultos||[]).length}</td><td>${Object.entries(cajas).map(([k,n]) => `${n}×${esc(k)}`).join(", ")}</td><td class="n">${uds}</td></tr>`;
+      if (ABIERTO !== r.id) return fila;
+      return fila + `<tr class="det"><td colspan="7">
+        <div class="det-b">${(r.bultos||[]).map((b,i) => `<div><b>Bulto ${i+1}/${r.bultos.length} · ${esc(b.caja)} (${esc(b.medidas)} cm)</b>
+          ${b.contenido.map(x => `<span>${x.uds} × ${esc(x.ref)} ${esc(x.desc)}</span>`).join("")}</div>`).join("")}</div>
+        <div class="row"><button data-ver="${esc(r.id)}">Ver bultos y reimprimir</button>
+        <button class="ghost" data-borrar="${esc(r.id)}">Borrar del registro</button><span class="note" id="borrarAviso"></span></div></td></tr>`;
+    }).join("");
+}
+$("regBuscar").addEventListener("input", pintarRegistro);
+$("tReg").addEventListener("click", async e => {
+  const ver = e.target.dataset.ver, borrar = e.target.dataset.borrar, fila = e.target.closest("tr.fila");
+  if (ver){ abrirRegistro(REGISTROS.find(r => r.id === ver)); return; }
+  if (borrar){
+    if (e.target.dataset.confirmar !== "1"){ e.target.dataset.confirmar = "1"; e.target.textContent = "Pulsa otra vez para borrar"; return; }
+    try { await DB.collection("envios").doc(borrar).delete(); ABIERTO = null; }
+    catch(err){ $("borrarAviso").innerHTML = `<span class="err">No se pudo borrar (${esc(err.code||"error")}).</span>`; }
+    return;
+  }
+  if (fila){ ABIERTO = ABIERTO === fila.dataset.id ? null : fila.dataset.id; pintarRegistro(); }
+});
+$("tReg").addEventListener("keydown", e => { if (e.key === "Enter" && e.target.matches("tr.fila")) e.target.click(); });
+
+async function guardarRegistro(){
+  const est = $("pdfEstado"), btn = $("saveBtn");
+  if (!DB || !ULTIMO) return;
+  const {res} = ULTIMO, {alb, ped, cli, fecha} = datosDoc();
+  Object.assign(ULTIMO, {alb, ped, cli, fecha});
+  if (alb === "—"){ est.innerHTML = '<span class="err">Falta el nº de albarán Ugari.</span>'; return; }
+  if (ped === "—"){ est.innerHTML = '<span class="err">Falta el nº de pedido del cliente.</span>'; return; }
+  if (!fecha){ est.innerHTML = '<span class="err">Falta la fecha del albarán.</span>'; return; }
+  const docData = {
+    albaran: alb, pedido_cliente: ped, cliente: cli, fecha_albaran: fecha, guardado: new Date().toISOString(),
+    bultos: res.map(c => ({
+      caja: c.tipo.nombre, medidas: `${c.tipo.l}x${c.tipo.a}x${c.tipo.h}`, l: c.tipo.l, a: c.tipo.a, h: c.tipo.h,
+      usado: Math.round(c.usado),
+      contenido: Object.entries(c.contenido).map(([ref,uds]) => ({ref, uds, desc: descDe(ref), colocacion: colocacion(c, ref)})),
+      capas: c.capas.map(k => ({ref:k.ref, z:k.z, o:k.o, nx:k.nx, ny:k.ny, per:k.per, k:k.k, niveles:k.niveles, usado:k.usado}))
+    }))
+  };
+  const ref = DB.collection("envios").doc(idDoc(alb));
+  btn.disabled = true;
+  try {
+    const previo = REGISTROS.find(r => r.id === idDoc(alb));
+    if (previo && btn.dataset.confirmar !== "1"){
+      btn.dataset.confirmar = "1"; btn.disabled = false;
+      btn.textContent = "Ya existe: pulsa otra vez para sustituirlo"; return;
+    }
+    await ref.set(docData);
+    ULTIMO.guardado = true; btn.textContent = "Guardado en el registro"; btn.dataset.confirmar = "";
+    est.innerHTML = '<span class="ok">Guardado.</span>';
+  } catch(e){
+    btn.disabled = false;
+    est.innerHTML = `<span class="err">No se pudo guardar (${esc(e.code||"error")}).</span>`;
+  }
+}
+
+function abrirRegistro(r){
+  if (!r) return;
+  for (const b of r.bultos) for (const x of b.contenido) DESC_EXTRA[x.ref] = x.desc;
+  const res = r.bultos.map(b => ({
+    tipo: {nombre:b.caja, l:b.l, a:b.a, h:b.h, vol:b.l*b.a*b.h},
+    capas: b.capas.map(k => ({...k, o:[...k.o]})),
+    contenido: Object.fromEntries(b.contenido.map(x => [x.ref, x.uds])),
+    usado: b.usado
+  }));
+  $("fAlb").value = r.albaran; $("fPed").value = r.pedido_cliente; $("fProv").value = r.cliente; $("fFecha").value = r.fecha_albaran;
+  pintarResultado({res, alb:r.albaran, ped:r.pedido_cliente, cli:r.cliente, fecha:r.fecha_albaran, guardado:true});
+  $("out").scrollIntoView({behavior:"smooth", block:"start"});
+}
+iniciarRegistro();
 
 /* ---------- lectura del albarán ---------- */
 let samplePromise = window.claude?.use ? window.claude.use("sample") : Promise.resolve(null);
@@ -622,7 +753,7 @@ Extrae:
 - numero_albaran: el número del albarán de Ugari.
 - pedido_proveedor: el número de pedido del CLIENTE (El Corte Inglés) que aparece en el albarán (su pedido, nº pedido cliente, pedido ECI, order no.). No uses el número del albarán.
 - proveedor: nombre del cliente al que va el albarán.
-- fecha: fecha del albarán tal como aparece.
+- fecha: fecha del albarán en formato AAAA-MM-DD (por ejemplo 2026-11-05). Las fechas españolas van día/mes/año.
 - lineas: cada artículo con referencia (código del artículo), descripcion y cantidad en UNIDADES (número). Si la cantidad viene en cajas y el albarán indica unidades por caja, multiplica.
 Si una referencia del albarán coincide con una de nuestro maestro (lista abajo, "ref | descripción"), usa exactamente la referencia del maestro.
 No inventes nada: si un dato no aparece, déjalo como "".
@@ -637,7 +768,7 @@ ${texto ? "\nTexto del PDF:\n" + texto.slice(0, 30000) : ""}`;
     $("fAlb").value = r.numero_albaran || "";
     $("fPed").value = r.pedido_proveedor || "";
     $("fProv").value = r.proveedor || "El Corte Inglés";
-    $("fFecha").value = r.fecha || "";
+    $("fFecha").value = aISO(r.fecha);
     LINEAS = (Array.isArray(r.lineas) ? r.lineas : []).map(l => ({ref:String(l.ref||"").trim(), desc:String(l.descripcion||""), cant:parseInt(l.cantidad,10)||0}));
     pintarLineas();
     est.innerHTML = `<span class="ok">Leídas ${LINEAS.length} líneas.</span> Revisa los datos y las cantidades antes de calcular.`;

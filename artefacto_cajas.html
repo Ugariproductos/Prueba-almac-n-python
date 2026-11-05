@@ -128,9 +128,10 @@ details .tbl{max-height:280px;overflow-y:auto;margin-top:10px}
     <section>
       <h2>1 · Albarán</h2>
       <div class="drop" id="drop" tabindex="0" role="button" aria-label="Subir albarán">
-        <strong>Arrastra aquí el PDF o la foto del albarán</strong>
-        <span class="note">o pulsa para elegir archivo · o pega una imagen con Ctrl+V · un PDF puede traer varios albaranes</span>
-        <input type="file" id="docFile" accept="application/pdf,image/png,image/jpeg,image/webp">
+        <strong>Arrastra aquí los albaranes (PDF o fotos)</strong>
+        <span class="file" style="pointer-events:none;background:var(--panel)">Elegir archivos del ordenador</span>
+        <span class="note">Puedes seleccionar varios archivos a la vez · o pegar una imagen con Ctrl+V · un PDF puede traer varios albaranes</span>
+        <input type="file" id="docFile" multiple accept="application/pdf,.pdf,image/png,image/jpeg,image/webp">
       </div>
       <div class="thumbs" id="thumbs"></div>
       <p id="leerEstado" class="note" style="margin:10px 0 0"></p>
@@ -995,18 +996,23 @@ function unirAlbaranes(encontrados){
   return lista;
 }
 
-async function procesarDocumento(file){
+async function procesarDocumento(lista){
+  const files = [...lista].filter(f => f.type === "application/pdf" || /\.pdf$/i.test(f.name) || f.type.startsWith("image/"));
+  if (!files.length){ $("leerEstado").innerHTML = '<span class="err">Solo se pueden cargar PDF o imágenes (JPG, PNG, WebP).</span>'; return; }
   const est = $("leerEstado");
   const sample = await samplePromise;
   if (!sample){ est.innerHTML = '<span class="err">La lectura automática no está disponible aquí. Escribe las líneas a mano.</span>'; return; }
   try {
-    est.textContent = "Preparando el documento…";
+    $("thumbs").innerHTML = "";
+    const encontrados = []; let cortado = false;
+    for (const [fi, file] of files.entries()){
+    const pref = files.length > 1 ? `Archivo ${fi+1} de ${files.length} (${file.name}) · ` : "";
+    est.textContent = pref + "Preparando el documento…";
     const esPDF = file.type === "application/pdf" || /\.pdf$/i.test(file.name);
     let pdf = null, total = 1, imagen = null;
     if (esPDF){ pdf = await abrirPDF(file); total = Math.min(pdf.numPages, MAX_PAGINAS); }
     else imagen = await imagenACanvas(file);
 
-    $("thumbs").innerHTML = "";
     for (let n = 1; n <= total; n++){
       const cv = pdf ? await paginaPDF(pdf, n, 0.35) : imagen;
       const im = new Image(); im.src = cv.toDataURL("image/jpeg", .6); im.alt = `Página ${n}`; $("thumbs").appendChild(im);
@@ -1015,10 +1021,9 @@ async function procesarDocumento(file){
     const lim = await sample.limits().catch(() => null);
     const maxImgs = lim?.images?.maxCount || 0;
     const porLlamada = maxImgs ? Math.max(1, Math.min(3, Math.floor(maxImgs/2))) : 3;
-    const encontrados = [];
     for (let desde = 1; desde <= total; desde += porLlamada){
       const hasta = Math.min(total, desde + porLlamada - 1);
-      est.textContent = total > 1 ? `Claude está leyendo las páginas ${desde}–${hasta} de ${total}…` : "Claude está leyendo el albarán… (puede tardar hasta un minuto)";
+      est.textContent = pref + (total > 1 ? `Claude está leyendo las páginas ${desde}–${hasta} de ${total}…` : "Claude está leyendo el albarán… (puede tardar hasta un minuto)");
       const canvases = [], textos = [];
       for (let n = desde; n <= hasta; n++){
         canvases.push(pdf ? await paginaPDF(pdf, n, 2) : imagen);
@@ -1030,11 +1035,13 @@ async function procesarDocumento(file){
       const r = await sample.json(promptLectura(desde, hasta, total, imgs.length > 0, texto), imgs.length ? {images: imgs} : {});
       encontrados.push(...(Array.isArray(r?.albaranes) ? r.albaranes : [r]));
     }
+    if (pdf && pdf.numPages > MAX_PAGINAS) cortado = true;
+    }
     const lista = unirAlbaranes(encontrados);
     if (!lista.length){ est.innerHTML = '<span class="err">No he encontrado ningún albarán en el documento.</span>'; return; }
     ACTIVO = -1; ALBARANES = lista; activar(0);
     const nl = lista.reduce((s,a) => s + a.lineas.length, 0);
-    est.innerHTML = `<span class="ok">Leídos ${lista.length} albarán${lista.length>1?"es":""} con ${nl} líneas${pdf && pdf.numPages > MAX_PAGINAS ? ` (solo las primeras ${MAX_PAGINAS} páginas)` : ""}.</span> Revisa los datos antes de guardar.`;
+    est.innerHTML = `<span class="ok">Leídos ${lista.length} albarán${lista.length>1?"es":""} con ${nl} líneas${files.length > 1 ? ` de ${files.length} archivos` : ""}${cortado ? ` (de los PDF largos solo se leen las primeras ${MAX_PAGINAS} páginas)` : ""}.</span> Revisa los datos antes de guardar.`;
   } catch(e){
     const msg = {not_granted:"No has permitido que la página use Claude. Puedes escribir las líneas a mano.",
       rate_limited:"Demasiadas lecturas seguidas. Espera un poco y vuelve a subirlo.",
@@ -1048,13 +1055,13 @@ async function procesarDocumento(file){
 const drop = $("drop");
 drop.onclick = () => $("docFile").click();
 drop.onkeydown = e => { if (e.key === "Enter" || e.key === " "){ e.preventDefault(); $("docFile").click(); } };
-$("docFile").onchange = e => { const f = e.target.files[0]; if (f) procesarDocumento(f); e.target.value = ""; };
+$("docFile").onchange = e => { const fs = [...e.target.files]; if (fs.length) procesarDocumento(fs); e.target.value = ""; };
 drop.ondragover = e => { e.preventDefault(); drop.classList.add("over"); };
 drop.ondragleave = () => drop.classList.remove("over");
-drop.ondrop = e => { e.preventDefault(); drop.classList.remove("over"); const f = e.dataTransfer.files[0]; if (f) procesarDocumento(f); };
+drop.ondrop = e => { e.preventDefault(); drop.classList.remove("over"); if (e.dataTransfer.files.length) procesarDocumento(e.dataTransfer.files); };
 document.addEventListener("paste", e => {
   const f = [...(e.clipboardData?.files || [])].find(f => f.type.startsWith("image/") || f.type === "application/pdf");
-  if (f){ e.preventDefault(); procesarDocumento(f); }
+  if (f){ e.preventDefault(); procesarDocumento([f]); }
 });
 
 /* ---------- Excel ---------- */

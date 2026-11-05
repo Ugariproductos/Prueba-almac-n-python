@@ -1,112 +1,164 @@
 <title>Cajas por pedido</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;800&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js"></script>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
 <style>
-/* Layout: hoja de expedición — panel de datos a la izquierda, resultado de cajas a la derecha */
+/* Layout: muelle de expedición — barra de carga arriba, albarán a la izquierda, bultos como etiquetas de envío */
 :root{
   --bg:#f3f1ec; --panel:#fffdf8; --fg:#1f2421; --muted:#6b6f68; --line:#d9d5ca;
-  --kraft:#b8864b; --kraft-soft:#ead9c0; --ok:#3d7a4f; --err:#b23a2e;
+  --kraft:#b8864b; --kraft-soft:#ead9c0; --kraft-dark:#8a6234; --ok:#3d7a4f; --err:#b23a2e; --warn-bg:#fbe9d6;
   --display:"Archivo",system-ui,sans-serif; --mono:"IBM Plex Mono",ui-monospace,monospace;
 }
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
   --bg:#181a17; --panel:#21241f; --fg:#ebe7dd; --muted:#9a9c92; --line:#3a3d36;
-  --kraft:#d4a266; --kraft-soft:#3f3324; --ok:#7cc08f; --err:#e8786b; color-scheme:dark}}
+  --kraft:#d4a266; --kraft-soft:#3f3324; --kraft-dark:#e8bf8a; --ok:#7cc08f; --err:#e8786b; --warn-bg:#3d2a1e; color-scheme:dark}}
 :root[data-theme="dark"]{
   --bg:#181a17; --panel:#21241f; --fg:#ebe7dd; --muted:#9a9c92; --line:#3a3d36;
-  --kraft:#d4a266; --kraft-soft:#3f3324; --ok:#7cc08f; --err:#e8786b; color-scheme:dark}
+  --kraft:#d4a266; --kraft-soft:#3f3324; --kraft-dark:#e8bf8a; --ok:#7cc08f; --err:#e8786b; --warn-bg:#3d2a1e; color-scheme:dark}
 body{background:var(--bg);color:var(--fg);font-family:var(--display);font-size:15px;line-height:1.45}
-.wrap{max-width:1180px;margin:0 auto;padding-block:24px 48px;
-  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
-h1{font-weight:800;font-size:1.9rem;letter-spacing:-.02em;margin:0;text-wrap:balance}
-.sub{color:var(--muted);margin:4px 0 20px}
-.grid{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,6fr);gap:20px;align-items:start}
-@media (max-width:860px){.grid{grid-template-columns:1fr}}
+.wrap{max-width:1240px;margin:0 auto;padding-block:20px 48px;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));
+  display:flex;flex-direction:column;gap:18px}
+h1{font-weight:800;font-size:1.8rem;letter-spacing:-.02em;margin:0}
+h2{font-size:.75rem;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);margin:0 0 10px;font-weight:600}
 section{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:16px;min-width:0}
-.stack{display:flex;flex-direction:column;gap:20px;min-width:0}
-h2{font-size:.78rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:0 0 10px;font-weight:600}
-.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
 button,input,select{font:inherit;color:inherit}
 button{background:var(--fg);color:var(--bg);border:0;border-radius:4px;padding:8px 14px;font-weight:600;cursor:pointer}
 button.ghost{background:transparent;color:var(--fg);border:1px solid var(--line)}
-button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--kraft);outline-offset:2px}
-input,select{background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:7px 9px;min-width:0}
-.file{display:inline-flex;align-items:center;gap:8px;border:1px dashed var(--kraft);border-radius:4px;padding:8px 12px;cursor:pointer}
-.file input{display:none}
+button:disabled{opacity:.5;cursor:default}
+button:focus-visible,input:focus-visible,select:focus-visible,.drop:focus-visible{outline:2px solid var(--kraft);outline-offset:2px}
+input,select{background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:6px 8px;min-width:0}
 .note{font-size:.85rem;color:var(--muted)}
-.tbl{overflow-x:auto;max-height:260px;overflow-y:auto}
-table{border-collapse:collapse;width:100%;font-size:.86rem}
-th,td{text-align:left;padding:5px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
-th{font-weight:600;color:var(--muted);font-size:.75rem;text-transform:uppercase;letter-spacing:.05em;position:sticky;top:0;background:var(--panel)}
-td.n{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums}
-.lines{display:flex;flex-direction:column;gap:6px;margin-bottom:10px}
-.line{display:grid;grid-template-columns:minmax(0,1fr) 90px 34px;gap:6px}
-.line button{padding:0;background:transparent;color:var(--muted);border:1px solid var(--line)}
 .err{color:var(--err);font-weight:600}
-.total{display:flex;gap:16px;flex-wrap:wrap;align-items:baseline;margin-bottom:14px}
-.total b{font-size:2.4rem;font-weight:800;line-height:1}
-.chip{font-family:var(--mono);font-size:.85rem;background:var(--kraft-soft);border-radius:3px;padding:3px 8px}
-.boxes{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
-.box{border:2px solid var(--kraft);border-radius:4px;padding:12px;background:var(--bg);display:flex;flex-direction:column;gap:8px}
-.box header{display:flex;justify-content:space-between;gap:8px;align-items:baseline}
-.box header strong{font-size:1.05rem}
-.dim{font-family:var(--mono);font-size:.8rem;color:var(--muted)}
-.bar{height:8px;background:var(--kraft-soft);border-radius:2px;overflow:hidden}
-.bar i{display:block;height:100%;background:var(--kraft)}
-.box ul{list-style:none;margin:0;padding:0;font-size:.88rem;display:flex;flex-direction:column;gap:3px}
-.box li{display:grid;grid-template-columns:44px minmax(0,1fr);gap:6px}
-.box li span:first-child{font-family:var(--mono);text-align:right}
-.box li span:last-child{overflow-wrap:anywhere}
+.ok{color:var(--ok);font-weight:600}
+
+/* carga */
+.top{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr);gap:18px}
+@media (max-width:820px){.top{grid-template-columns:1fr}}
+.drop{border:2px dashed var(--kraft);border-radius:6px;padding:22px;display:flex;flex-direction:column;align-items:center;gap:8px;text-align:center;cursor:pointer;background:var(--bg)}
+.drop.over{background:var(--kraft-soft)}
+.drop strong{font-size:1.15rem}
+.drop input{display:none}
+.file{display:inline-flex;align-items:center;border:1px solid var(--line);border-radius:4px;padding:7px 12px;cursor:pointer;font-weight:600}
+.file input{display:none}
+.thumbs{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.thumbs img{height:90px;border:1px solid var(--line);border-radius:3px;background:#fff}
+
+/* albarán */
+.doc{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:14px}
+.field{display:flex;flex-direction:column;gap:3px}
+.field label{font-size:.72rem;text-transform:uppercase;letter-spacing:.07em;color:var(--muted)}
+.field input{font-family:var(--mono);font-weight:600;font-size:1rem}
+.tbl{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:.88rem}
+th,td{text-align:left;padding:5px 6px;border-bottom:1px solid var(--line)}
+th{font-weight:600;color:var(--muted);font-size:.72rem;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap}
+td input{width:100%}
+td.n{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap}
+tr.bad td{background:var(--warn-bg)}
+.x{padding:2px 8px;background:transparent;color:var(--muted);border:1px solid var(--line)}
+.dot{display:inline-block;width:10px;height:10px;border-radius:2px;vertical-align:middle}
+
+/* resultado */
+.summary{display:flex;gap:18px;flex-wrap:wrap;align-items:center;margin-bottom:16px}
+.big{display:flex;align-items:baseline;gap:8px}
+.big b{font-size:3rem;font-weight:800;line-height:1;font-variant-numeric:tabular-nums}
+.chip{font-family:var(--mono);font-size:.85rem;background:var(--kraft-soft);border-radius:3px;padding:4px 9px}
+.labels{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px}
+.label{border:2px solid var(--fg);border-radius:3px;background:var(--panel);display:flex;flex-direction:column}
+.label .head{background:var(--fg);color:var(--bg);display:flex;justify-content:space-between;align-items:center;padding:8px 12px}
+.label .head b{font-size:1.25rem;font-weight:800;letter-spacing:.02em}
+.label .head span{font-family:var(--mono);font-size:.85rem}
+.label .refs{display:grid;grid-template-columns:1fr 1fr;border-bottom:1px solid var(--line)}
+.label .refs div{padding:6px 12px;display:flex;flex-direction:column}
+.label .refs div+div{border-left:1px solid var(--line)}
+.label .refs small{font-size:.66rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
+.label .refs strong{font-family:var(--mono);font-size:.95rem;overflow-wrap:anywhere}
+.label .boxrow{display:flex;gap:12px;align-items:center;padding:12px;border-bottom:1px solid var(--line)}
+.label .boxrow svg{flex:0 0 112px;width:112px;height:auto}
+.label .dims{display:flex;flex-direction:column;gap:2px;min-width:0}
+.label .dims small{font-size:.66rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
+.label .dims strong{font-size:1.5rem;font-weight:800;font-variant-numeric:tabular-nums;line-height:1.1}
+.label .dims em{font-style:normal;font-family:var(--mono);font-size:.8rem;color:var(--muted)}
+.label ul{list-style:none;margin:0;padding:8px 12px 12px;display:flex;flex-direction:column;gap:5px}
+.label li{display:grid;grid-template-columns:12px 46px minmax(0,1fr);gap:8px;align-items:baseline}
+.label li .q{font-family:var(--mono);font-weight:600;text-align:right;font-variant-numeric:tabular-nums}
+.label li .r{font-family:var(--mono);font-weight:600}
+.label li .d{display:block;font-size:.8rem;color:var(--muted);overflow-wrap:anywhere}
+details summary{cursor:pointer;font-weight:600}
+details .tbl{max-height:280px;overflow-y:auto;margin-top:10px}
 </style>
 
 <div class="wrap">
-  <h1>Cajas por pedido</h1>
-  <p class="sub">Carga tu Excel de artículos y cajas, escribe el pedido y te dice cuántas cajas de envío usar y qué va en cada una.</p>
+  <header>
+    <h1>Cajas por pedido</h1>
+    <p class="note" style="margin:4px 0 0">Sube o pega el albarán. Claude lee las líneas, y la página reparte la mercancía en el menor número de cajas de envío.</p>
+  </header>
 
-  <div class="grid">
-    <div class="stack">
-      <section>
-        <h2>1 · Datos</h2>
-        <div class="row">
-          <label class="file" for="xls">Cargar Excel (.xlsx)<input type="file" id="xls" accept=".xlsx,.xls"></label>
-          <span class="note" id="origen">Usando datos de EJEMPLO</span>
-        </div>
-        <p class="note">Hoja de artículos: Referencia, Descripción, Largo, Ancho, Alto (cm, de la caja del artículo), Uds por caja. Hoja de cajas: Caja, Largo, Ancho, Alto. Para añadir productos, añade filas al Excel y vuelve a cargarlo.</p>
-        <div class="row" style="margin-top:8px">
-          <label for="aprov" class="note">Aprovechamiento de la caja</label>
-          <input type="number" id="aprov" min="50" max="100" value="90" style="width:80px"> <span class="note">%</span>
-        </div>
-      </section>
-      <section>
-        <h2>Cajas de envío</h2>
-        <div class="tbl"><table id="tCajas"></table></div>
-      </section>
-      <section>
-        <h2>Artículos</h2>
-        <div class="tbl"><table id="tArt"></table></div>
-      </section>
-    </div>
-
-    <div class="stack">
-      <section>
-        <h2>2 · Pedido</h2>
-        <div class="lines" id="lines"></div>
-        <div class="row">
-          <button class="ghost" id="add">Añadir línea</button>
-          <button id="calc">Calcular cajas</button>
-        </div>
-      </section>
-      <section>
-        <h2>3 · Resultado</h2>
-        <div id="out"></div>
-      </section>
-    </div>
+  <div class="top">
+    <section>
+      <h2>1 · Albarán</h2>
+      <div class="drop" id="drop" tabindex="0" role="button" aria-label="Subir albarán">
+        <strong>Arrastra aquí el PDF o la foto del albarán</strong>
+        <span class="note">o pulsa para elegir archivo · o pega una imagen con Ctrl+V</span>
+        <input type="file" id="docFile" accept="application/pdf,image/png,image/jpeg,image/webp">
+      </div>
+      <div class="thumbs" id="thumbs"></div>
+      <p id="leerEstado" class="note" style="margin:10px 0 0"></p>
+    </section>
+    <section>
+      <h2>Maestro de artículos y cajas</h2>
+      <div class="row">
+        <label class="file" for="xls">Cargar Excel<input type="file" id="xls" accept=".xlsx,.xls"></label>
+        <span class="note" id="origen"></span>
+      </div>
+      <p class="note">Hoja de artículos: Referencia, Descripción, Largo, Ancho, Alto (cm de la caja del artículo), Uds por caja. Hoja de cajas: Caja, Largo, Ancho, Alto. Para ampliar productos, añade filas y vuelve a cargarlo. Se recuerda en este navegador.</p>
+      <div class="row">
+        <label for="aprov" class="note">Llenado máximo de cada caja</label>
+        <input type="number" id="aprov" min="50" max="100" value="90" style="width:70px"><span class="note">%</span>
+      </div>
+    </section>
   </div>
+
+  <section>
+    <h2>2 · Datos del albarán</h2>
+    <div class="doc">
+      <div class="field"><label for="fAlb">Nº albarán</label><input id="fAlb"></div>
+      <div class="field"><label for="fPed">Nº pedido proveedor</label><input id="fPed"></div>
+      <div class="field"><label for="fProv">Proveedor</label><input id="fProv"></div>
+      <div class="field"><label for="fFecha">Fecha</label><input id="fFecha"></div>
+    </div>
+    <div class="tbl"><table id="tLineas"></table></div>
+    <div class="row" style="margin-top:10px">
+      <button class="ghost" id="add">Añadir línea</button>
+      <button id="calc">Calcular cajas</button>
+      <span id="avisoLineas" class="note"></span>
+    </div>
+  </section>
+
+  <section>
+    <h2>3 · Bultos</h2>
+    <div id="out"></div>
+  </section>
+
+  <section>
+    <details>
+      <summary>Ver maestro cargado</summary>
+      <div class="tbl"><table id="tCajas"></table></div>
+      <div class="tbl"><table id="tArt"></table></div>
+    </details>
+  </section>
 </div>
+
+<datalist id="refsList"></datalist>
 
 <script>
 const EPS = 1e-9;
-let ARTS = {}, CAJAS = [];
+const COLORES = ["#c0692b","#3f7cac","#5c9a4a","#a8508f","#c9a227","#2f9c95","#8c5a3c","#6c63b5","#d0574f","#4b8b3b"];
+let ARTS = {}, CAJAS = [], LINEAS = [], DOC_IMGS = [], DOC_TEXTO = "";
 
 const EJEMPLO = {
   arts: [["EJ-001","EJEMPLO Pañal adulto talla M (paquete)",60,40,40,4],
@@ -114,21 +166,31 @@ const EJEMPLO = {
          ["EJ-003","EJEMPLO Crema barrera 200 ml",30,20,15,24],
          ["EJ-004","EJEMPLO Guantes nitrilo (caja 100)",50,25,25,10]],
   cajas: [["EJ Pequeña",30,20,20],["EJ Mediana",40,30,30],["EJ Grande",60,40,40]],
-  pedido: [["EJ-001",6],["EJ-002",5],["EJ-003",30],["EJ-004",3]]
+  doc: {albaran:"EJEMPLO-0001", pedido:"EJ-PED-77", proveedor:"Proveedor de ejemplo", fecha:""},
+  lineas: [["EJ-001","",6],["EJ-002","",5],["EJ-003","",30],["EJ-004","",3]]
 };
 
+const $ = id => document.getElementById(id);
 const num = v => (v === null || v === undefined || v === "") ? null : parseFloat(String(v).replace(",", "."));
 const col = (cab, ...k) => cab.findIndex(c => k.some(x => String(c ?? "").toLowerCase().includes(x)));
 const fmt = n => Math.round(n).toLocaleString("es-ES");
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const norm = s => String(s ?? "").toUpperCase().replace(/[\s.\-_/]/g, "");
 
-function cargarFilas(arts, cajas){
+/* ---------- maestro ---------- */
+function cargarMaestro(arts, cajas){
   ARTS = {}; CAJAS = [];
-  for (const [ref, desc, l, a, h, uds] of arts){
-    ARTS[ref] = {ref, desc, medidas:`${l}x${a}x${h}`, uds:uds||1, vol_ud: l*a*h/(uds||1)};
-  }
-  for (const [nombre, l, a, h] of cajas) CAJAS.push({nombre, medidas:`${l}x${a}x${h}`, vol:l*a*h});
+  for (const [ref, desc, l, a, h, uds] of arts)
+    ARTS[ref] = {ref, desc, l, a, h, uds:uds||1, vol_ud: l*a*h/(uds||1)};
+  for (const [nombre, l, a, h] of cajas) CAJAS.push({nombre, l, a, h, vol:l*a*h});
+  pintarMaestro();
 }
-
+function buscarRef(r){
+  if (!r) return null;
+  if (ARTS[r]) return r;
+  const n = norm(r);
+  return Object.keys(ARTS).find(k => norm(k) === n) || null;
+}
 function leerLibro(wb){
   const arts = [], cajas = [];
   for (const name of wb.SheetNames){
@@ -156,13 +218,52 @@ function leerLibro(wb){
   if (!cajas.length) throw new Error("No encuentro la hoja de cajas de envío (Caja, Largo, Ancho, Alto).");
   return {arts, cajas};
 }
+function pintarMaestro(){
+  $("tCajas").innerHTML = "<tr><th>Caja de envío</th><th>Medidas (cm)</th><th>Volumen (cm³)</th></tr>" +
+    [...CAJAS].sort((a,b)=>a.vol-b.vol).map(c=>`<tr><td>${esc(c.nombre)}</td><td class="n">${c.l} × ${c.a} × ${c.h}</td><td class="n">${fmt(c.vol)}</td></tr>`).join("");
+  $("tArt").innerHTML = "<tr><th>Ref.</th><th>Descripción</th><th>Caja art. (cm)</th><th>Uds</th><th>cm³/ud</th></tr>" +
+    Object.values(ARTS).map(a=>`<tr><td>${esc(a.ref)}</td><td>${esc(a.desc)}</td><td class="n">${a.l} × ${a.a} × ${a.h}</td><td class="n">${a.uds}</td><td class="n">${fmt(a.vol_ud)}</td></tr>`).join("");
+  $("refsList").innerHTML = Object.values(ARTS).map(a=>`<option value="${esc(a.ref)}">${esc(a.desc)}</option>`).join("");
+}
 
-// Mismo algoritmo que empaquetado.py
+/* ---------- líneas del albarán ---------- */
+function pintarLineas(){
+  let malas = 0;
+  $("tLineas").innerHTML = "<tr><th></th><th>Referencia</th><th>Descripción en albarán</th><th>Uds</th><th>En maestro</th><th></th></tr>" +
+    LINEAS.map((l,i) => {
+      const k = buscarRef(l.ref); if (!k) malas++;
+      return `<tr class="${k?"":"bad"}">
+        <td><span class="dot" style="background:${k?colorDe(k):"transparent"}"></span></td>
+        <td><input list="refsList" data-i="${i}" data-f="ref" id="lr${i}" value="${esc(l.ref)}" aria-label="Referencia"></td>
+        <td><input data-i="${i}" data-f="desc" id="ld${i}" value="${esc(l.desc)}" aria-label="Descripción"></td>
+        <td style="width:90px"><input type="number" min="0" data-i="${i}" data-f="cant" id="lc${i}" value="${l.cant}" aria-label="Unidades"></td>
+        <td>${k ? `<span class="ok">✓</span> ${esc(ARTS[k].desc)}` : '<span class="err">No está en el maestro</span>'}</td>
+        <td><button class="x" data-del="${i}" aria-label="Quitar línea">✕</button></td></tr>`;
+    }).join("");
+  $("avisoLineas").innerHTML = malas ? `<span class="err">${malas} línea(s) sin referencia en el maestro: corrígelas o añádelas al Excel.</span>` : "";
+}
+$("tLineas").addEventListener("change", e => {
+  const t = e.target, i = +t.dataset.i; if (isNaN(i)) return;
+  LINEAS[i][t.dataset.f] = t.dataset.f === "cant" ? (parseInt(t.value,10)||0) : t.value.trim();
+  if (t.dataset.f === "ref") pintarLineas();
+});
+$("tLineas").addEventListener("click", e => {
+  const d = e.target.dataset.del; if (d === undefined) return;
+  LINEAS.splice(+d,1); pintarLineas();
+});
+$("add").onclick = () => { LINEAS.push({ref:"",desc:"",cant:1}); pintarLineas(); };
+
+const ORDEN_COLOR = {};
+function colorDe(ref){
+  if (!(ref in ORDEN_COLOR)) ORDEN_COLOR[ref] = Object.keys(ORDEN_COLOR).length;
+  return COLORES[ORDEN_COLOR[ref] % COLORES.length];
+}
+
+/* ---------- empaquetado (mismo algoritmo que empaquetado.py) ---------- */
 function empaquetar(pedido, aprov){
   const tipos = [...CAJAS].sort((a,b)=>a.vol-b.vol);
   const grande = tipos[tipos.length-1], cap = grande.vol*aprov;
   const lineas = pedido.map(([ref,cant]) => {
-    if (!ARTS[ref]) throw new Error(`Referencia desconocida: ${ref}`);
     const vol = ARTS[ref].vol_ud;
     if (vol > cap + EPS) throw new Error(`${ref}: una unidad no cabe ni en la caja ${grande.nombre}.`);
     return [ref, cant, vol];
@@ -177,82 +278,212 @@ function empaquetar(pedido, aprov){
     const porCaja = Math.floor((cap+EPS)/vol);
     while (cant){ const n = Math.min(porCaja, cant); abiertas.push({contenido:{[ref]:n}, usado:n*vol}); cant -= n; }
   }
-  return abiertas.map(c => {
-    const t = tipos.find(t => c.usado <= t.vol*aprov + EPS);
-    return {caja:t.nombre, medidas:t.medidas, capacidad:t.vol, usado:c.usado, contenido:c.contenido};
-  });
+  return abiertas.map(c => ({tipo: tipos.find(t => c.usado <= t.vol*aprov + EPS), usado:c.usado, contenido:c.contenido}));
 }
 
-function pintarTablas(){
-  document.getElementById("tCajas").innerHTML =
-    "<tr><th>Caja</th><th>Medidas (cm)</th><th>Volumen (cm³)</th></tr>" +
-    [...CAJAS].sort((a,b)=>a.vol-b.vol).map(c=>`<tr><td>${esc(c.nombre)}</td><td class="n">${c.medidas}</td><td class="n">${fmt(c.vol)}</td></tr>`).join("");
-  document.getElementById("tArt").innerHTML =
-    "<tr><th>Ref.</th><th>Descripción</th><th>Caja art. (cm)</th><th>Uds</th><th>cm³/ud</th></tr>" +
-    Object.values(ARTS).map(a=>`<tr><td>${esc(a.ref)}</td><td>${esc(a.desc)}</td><td class="n">${a.medidas}</td><td class="n">${a.uds}</td><td class="n">${fmt(a.vol_ud)}</td></tr>`).join("");
-  document.querySelectorAll(".line select").forEach(rellenarSelect);
-}
-
-function esc(s){ return String(s).replace(/[&<>"]/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
-
-let lineId = 0;
-function rellenarSelect(sel){
-  const v = sel.value;
-  sel.innerHTML = '<option value="">— Referencia —</option>' +
-    Object.values(ARTS).map(a=>`<option value="${esc(a.ref)}">${esc(a.ref)} · ${esc(a.desc)}</option>`).join("");
-  if (ARTS[v]) sel.value = v;
-}
-function addLine(ref="", cant=""){
-  const id = ++lineId, d = document.createElement("div");
-  d.className = "line";
-  d.innerHTML = `<select id="ref${id}" aria-label="Referencia"></select>
-    <input id="cant${id}" type="number" min="1" placeholder="Uds" aria-label="Cantidad" value="${cant}">
-    <button aria-label="Quitar línea">✕</button>`;
-  const sel = d.querySelector("select"); rellenarSelect(sel); sel.value = ref;
-  d.querySelector("button").onclick = () => d.remove();
-  document.getElementById("lines").appendChild(d);
+/* caja isométrica con el contenido apilado por referencia */
+function cajaSVG(caja){
+  const W=112, H=106, x0=10, y0=30, w=60, d=26, h=56;   // frente w×h, fondo d en diagonal
+  const capas = []; let acum = 0;
+  for (const [ref,u] of Object.entries(caja.contenido)){
+    const frac = u*ARTS[ref].vol_ud / caja.tipo.vol;
+    capas.push({ref, y: acum, f: frac}); acum += frac;
+  }
+  const fy = v => y0 + h - v*h;
+  let rel = capas.map(c => `<rect x="${x0}" y="${fy(c.y+c.f).toFixed(1)}" width="${w}" height="${(c.f*h).toFixed(1)}" fill="${colorDe(c.ref)}"/>
+      <polygon points="${x0+w},${fy(c.y+c.f)} ${x0+w+d},${fy(c.y+c.f)-d*0.6} ${x0+w+d},${fy(c.y)-d*0.6} ${x0+w},${fy(c.y)}" fill="${colorDe(c.ref)}" opacity=".75"/>`).join("");
+  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Ocupación ${Math.round(acum*100)}%">
+    <polygon points="${x0},${y0} ${x0+d},${y0-d*0.6} ${x0+w+d},${y0-d*0.6} ${x0+w},${y0}" fill="var(--kraft-soft)" stroke="var(--kraft-dark)" stroke-width="1.5"/>
+    <rect x="${x0}" y="${y0}" width="${w}" height="${h}" fill="var(--kraft-soft)"/>
+    <polygon points="${x0+w},${y0} ${x0+w+d},${y0-d*0.6} ${x0+w+d},${y0+h-d*0.6} ${x0+w},${y0+h}" fill="var(--kraft-soft)"/>
+    ${rel}
+    <rect x="${x0}" y="${y0}" width="${w}" height="${h}" fill="none" stroke="var(--kraft-dark)" stroke-width="1.5"/>
+    <polygon points="${x0+w},${y0} ${x0+w+d},${y0-d*0.6} ${x0+w+d},${y0+h-d*0.6} ${x0+w},${y0+h}" fill="none" stroke="var(--kraft-dark)" stroke-width="1.5"/>
+    <text x="${x0+w/2}" y="${y0+h+14}" text-anchor="middle" font-size="11" font-family="IBM Plex Mono, monospace" fill="var(--muted)">${Math.round(acum*100)}% lleno</text>
+  </svg>`;
 }
 
 function calcular(){
-  const out = document.getElementById("out");
-  const pedido = [...document.querySelectorAll(".line")].map(l => [l.querySelector("select").value, parseInt(l.querySelector("input").value,10)])
-    .filter(([r,c]) => r && c > 0);
-  if (!pedido.length){ out.innerHTML = '<p class="note">Añade al menos una línea con referencia y cantidad.</p>'; return; }
-  const aprov = Math.min(100, Math.max(50, num(document.getElementById("aprov").value) || 90))/100;
+  const out = $("out");
+  if (!CAJAS.length){ out.innerHTML = '<p class="err">Carga el Excel con las cajas de envío.</p>'; return; }
+  const pedido = [], fuera = [];
+  for (const l of LINEAS){
+    if (!(l.cant > 0)) continue;
+    const k = buscarRef(l.ref);
+    if (k) pedido.push([k, l.cant]); else fuera.push(l.ref || "(sin referencia)");
+  }
+  if (!pedido.length){ out.innerHTML = '<p class="note">No hay líneas con referencia del maestro y cantidad.</p>'; return; }
+  const aprov = Math.min(100, Math.max(50, num($("aprov").value) || 90))/100;
+  const alb = $("fAlb").value.trim() || "—", ped = $("fPed").value.trim() || "—";
   try {
     const res = empaquetar(pedido, aprov);
     const resumen = {};
-    res.forEach(c => resumen[c.caja] = (resumen[c.caja]||0)+1);
-    out.innerHTML = `<div class="total"><b>${res.length}</b><span>caja${res.length>1?"s":""}</span>
-      ${Object.entries(resumen).map(([k,n])=>`<span class="chip">${n} × ${esc(k)}</span>`).join("")}</div>
-      <div class="boxes">${res.map((c,i)=>{
-        const p = 100*c.usado/c.capacidad;
-        return `<article class="box"><header><strong>Caja ${i+1} · ${esc(c.caja)}</strong><span class="dim">${c.medidas}</span></header>
-          <div class="bar" title="Ocupación"><i style="width:${p.toFixed(1)}%"></i></div>
-          <span class="dim">Ocupación ${p.toFixed(0)}%</span>
-          <ul>${Object.entries(c.contenido).map(([r,u])=>`<li><span>${u}</span><span>${esc(r)} · ${esc(ARTS[r].desc)}</span></li>`).join("")}</ul></article>`;
-      }).join("")}</div>`;
+    res.forEach(c => resumen[c.tipo.nombre] = (resumen[c.tipo.nombre]||0)+1);
+    const total = res.length;
+    out.innerHTML = `
+      <div class="summary">
+        <div class="big"><b>${total}</b><span>bulto${total>1?"s":""}</span></div>
+        ${Object.entries(resumen).map(([k,n])=>`<span class="chip">${n} × ${esc(k)}</span>`).join("")}
+        <span class="note">Albarán ${esc(alb)} · Pedido ${esc(ped)}</span>
+      </div>
+      ${fuera.length ? `<p class="err">No incluidas (no están en el maestro): ${fuera.map(esc).join(", ")}</p>` : ""}
+      <div class="labels">${res.map((c,i)=>`
+        <article class="label">
+          <div class="head"><b>BULTO ${i+1} / ${total}</b><span>${esc(c.tipo.nombre)}</span></div>
+          <div class="refs">
+            <div><small>Nº albarán</small><strong>${esc(alb)}</strong></div>
+            <div><small>Pedido proveedor</small><strong>${esc(ped)}</strong></div>
+          </div>
+          <div class="boxrow">
+            ${cajaSVG(c)}
+            <div class="dims"><small>Caja exterior (cm)</small>
+              <strong>${c.tipo.l} × ${c.tipo.a} × ${c.tipo.h}</strong>
+              <em>${Object.values(c.contenido).reduce((s,u)=>s+u,0)} uds · ${Object.keys(c.contenido).length} ref.</em></div>
+          </div>
+          <ul>${Object.entries(c.contenido).map(([r,u])=>`
+            <li><span class="dot" style="background:${colorDe(r)}"></span><span class="q">${u}</span>
+              <span><span class="r">${esc(r)}</span><span class="d">${esc(ARTS[r].desc)}</span></span></li>`).join("")}
+          </ul>
+        </article>`).join("")}
+      </div>`;
   } catch(e){ out.innerHTML = `<p class="err">${esc(e.message)}</p>`; }
 }
+$("calc").onclick = calcular;
 
-document.getElementById("xls").addEventListener("change", async ev => {
-  const f = ev.target.files[0]; if (!f) return;
-  const origen = document.getElementById("origen");
+/* ---------- lectura del albarán ---------- */
+let samplePromise = window.claude?.use ? window.claude.use("sample") : Promise.resolve(null);
+
+async function pdfAImagenes(file){
+  pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+  const pdf = await pdfjsLib.getDocument({data: await file.arrayBuffer()}).promise;
+  const imgs = [], textos = [];
+  for (let p = 1; p <= Math.min(pdf.numPages, 3); p++){
+    const page = await pdf.getPage(p);
+    const tc = await page.getTextContent();
+    textos.push(tc.items.map(it => it.str).join(" "));
+    const vp = page.getViewport({scale: 2});
+    const cv = document.createElement("canvas"); cv.width = vp.width; cv.height = vp.height;
+    await page.render({canvasContext: cv.getContext("2d"), viewport: vp}).promise;
+    imgs.push(cv);
+  }
+  return {canvases: imgs, texto: textos.join("\n---\n").trim()};
+}
+function imagenACanvas(file){
+  return new Promise((ok, ko) => {
+    const img = new Image();
+    img.onload = () => { const cv = document.createElement("canvas"); cv.width = img.naturalWidth; cv.height = img.naturalHeight;
+      cv.getContext("2d").drawImage(img,0,0); URL.revokeObjectURL(img.src); ok(cv); };
+    img.onerror = () => ko(new Error("No puedo abrir la imagen."));
+    img.src = URL.createObjectURL(file);
+  });
+}
+/* Claude recibe cada imagen reducida a ~1,2 Mpx: partimos las páginas altas en dos mitades para que el texto se lea */
+async function trozos(canvases, max){
+  const blobs = [];
+  for (const cv of canvases){
+    const partes = cv.height > cv.width*1.1 ? 2 : 1;
+    const alto = Math.ceil(cv.height/partes), solape = Math.round(alto*0.06);
+    for (let i=0; i<partes; i++){
+      const y = Math.max(0, i*alto - solape), hh = Math.min(cv.height - y, alto + solape);
+      const c2 = document.createElement("canvas"); c2.width = cv.width; c2.height = hh;
+      c2.getContext("2d").drawImage(cv, 0, y, cv.width, hh, 0, 0, cv.width, hh);
+      blobs.push(await new Promise(r => c2.toBlob(r, "image/png")));
+    }
+  }
+  return blobs.slice(0, max);
+}
+
+async function procesarDocumento(file){
+  const est = $("leerEstado");
+  const sample = await samplePromise;
+  if (!sample){ est.innerHTML = '<span class="err">La lectura automática no está disponible aquí. Escribe las líneas a mano.</span>'; return; }
   try {
-    const wb = XLSX.read(await f.arrayBuffer(), {type:"array"});
-    const {arts, cajas} = leerLibro(wb);
-    cargarFilas(arts, cajas); pintarTablas();
-    document.getElementById("lines").innerHTML = ""; addLine();
-    document.getElementById("out").innerHTML = '<p class="note">Excel cargado. Escribe el pedido y pulsa Calcular cajas.</p>';
-    origen.textContent = `${f.name}: ${arts.length} artículos, ${cajas.length} cajas`;
-    origen.className = "note";
-  } catch(e){ origen.textContent = e.message; origen.className = "err"; }
-});
-document.getElementById("add").onclick = () => addLine();
-document.getElementById("calc").onclick = calcular;
+    est.textContent = "Preparando el documento…";
+    let canvases, texto = "";
+    if (file.type === "application/pdf" || /\.pdf$/i.test(file.name)) ({canvases, texto} = await pdfAImagenes(file));
+    else canvases = [await imagenACanvas(file)];
+    $("thumbs").innerHTML = "";
+    canvases.forEach(cv => { const im = new Image(); im.src = cv.toDataURL("image/jpeg", .6); im.alt = "Página del albarán"; $("thumbs").appendChild(im); });
 
-cargarFilas(EJEMPLO.arts, EJEMPLO.cajas);
-pintarTablas();
-EJEMPLO.pedido.forEach(([r,c]) => addLine(r,c));
-calcular();
+    const lim = await sample.limits().catch(() => null);
+    const maxImgs = lim?.images?.maxCount || 0;
+    const imgs = maxImgs ? await trozos(canvases, maxImgs) : [];
+    if (!imgs.length && !texto){ est.innerHTML = '<span class="err">Este visor no puede enviar imágenes a Claude. Prueba con un PDF que tenga texto.</span>'; return; }
+
+    const refs = Object.values(ARTS).slice(0, 400).map(a => `${a.ref} | ${a.desc}`).join("\n");
+    const prompt = `Eres un operario de almacén. Te paso un albarán de entrega de un proveedor${imgs.length?" (imágenes; las páginas altas van partidas en dos trozos con un poco de solape, no dupliques líneas)":""}${texto?" y el texto extraído del PDF":""}.
+Extrae:
+- numero_albaran: el número del albarán / nota de entrega.
+- pedido_proveedor: el número de pedido que aparece en el albarán (nº pedido, su pedido, n/pedido, order no.).
+- proveedor: nombre de la empresa que emite el albarán.
+- fecha: fecha del albarán tal como aparece.
+- lineas: cada artículo con referencia (código del artículo), descripcion y cantidad en UNIDADES (número). Si la cantidad viene en cajas y el albarán indica unidades por caja, multiplica.
+Si una referencia del albarán coincide con una de nuestro maestro (lista abajo, "ref | descripción"), usa exactamente la referencia del maestro.
+No inventes nada: si un dato no aparece, déjalo como "".
+Responde solo con JSON: {"numero_albaran":"","pedido_proveedor":"","proveedor":"","fecha":"","lineas":[{"ref":"","descripcion":"","cantidad":0}]}
+
+Maestro:
+${refs}
+${texto ? "\nTexto del PDF:\n" + texto.slice(0, 30000) : ""}`;
+
+    est.textContent = "Claude está leyendo el albarán… (puede tardar hasta un minuto)";
+    const r = await sample.json(prompt, imgs.length ? {images: imgs} : {});
+    $("fAlb").value = r.numero_albaran || "";
+    $("fPed").value = r.pedido_proveedor || "";
+    $("fProv").value = r.proveedor || "";
+    $("fFecha").value = r.fecha || "";
+    LINEAS = (Array.isArray(r.lineas) ? r.lineas : []).map(l => ({ref:String(l.ref||"").trim(), desc:String(l.descripcion||""), cant:parseInt(l.cantidad,10)||0}));
+    pintarLineas();
+    est.innerHTML = `<span class="ok">Leídas ${LINEAS.length} líneas.</span> Revisa los datos y las cantidades antes de calcular.`;
+    if (LINEAS.length) calcular();
+  } catch(e){
+    const msg = {not_granted:"No has permitido que la página use Claude. Puedes escribir las líneas a mano.",
+      rate_limited:"Demasiadas lecturas seguidas. Espera un poco y vuelve a subirlo.",
+      image_rejected:"La imagen no es válida o es demasiado grande.",
+      invalid_json:"Claude no devolvió las líneas en el formato esperado. Vuelve a subir el albarán.",
+      images_unavailable:"Este visor no puede enviar imágenes a Claude."}[e?.code] || (e?.message ? `No se pudo leer el albarán: ${e.message}` : "No se pudo leer el albarán.");
+    est.innerHTML = `<span class="err">${esc(msg)}</span>`;
+  }
+}
+
+const drop = $("drop");
+drop.onclick = () => $("docFile").click();
+drop.onkeydown = e => { if (e.key === "Enter" || e.key === " "){ e.preventDefault(); $("docFile").click(); } };
+$("docFile").onchange = e => { const f = e.target.files[0]; if (f) procesarDocumento(f); e.target.value = ""; };
+drop.ondragover = e => { e.preventDefault(); drop.classList.add("over"); };
+drop.ondragleave = () => drop.classList.remove("over");
+drop.ondrop = e => { e.preventDefault(); drop.classList.remove("over"); const f = e.dataTransfer.files[0]; if (f) procesarDocumento(f); };
+document.addEventListener("paste", e => {
+  const f = [...(e.clipboardData?.files || [])].find(f => f.type.startsWith("image/") || f.type === "application/pdf");
+  if (f){ e.preventDefault(); procesarDocumento(f); }
+});
+
+/* ---------- Excel ---------- */
+$("xls").addEventListener("change", async ev => {
+  const f = ev.target.files[0]; if (!f) return;
+  try {
+    const {arts, cajas} = leerLibro(XLSX.read(await f.arrayBuffer(), {type:"array"}));
+    cargarMaestro(arts, cajas);
+    try { localStorage.setItem("maestro", JSON.stringify({nombre:f.name, arts, cajas})); } catch(_){}
+    $("origen").className = "note"; $("origen").textContent = `${f.name}: ${arts.length} artículos, ${cajas.length} cajas`;
+    pintarLineas(); if (LINEAS.length) calcular();
+  } catch(e){ $("origen").className = "err"; $("origen").textContent = e.message; }
+  ev.target.value = "";
+});
+
+/* ---------- arranque ---------- */
+let guardado = null;
+try { guardado = JSON.parse(localStorage.getItem("maestro") || "null"); } catch(_){}
+if (guardado?.arts?.length && guardado?.cajas?.length){
+  cargarMaestro(guardado.arts, guardado.cajas);
+  $("origen").textContent = `${guardado.nombre}: ${guardado.arts.length} artículos, ${guardado.cajas.length} cajas`;
+  pintarLineas();
+  $("out").innerHTML = '<p class="note">Sube o pega un albarán para ver los bultos.</p>';
+} else {
+  cargarMaestro(EJEMPLO.arts, EJEMPLO.cajas);
+  $("origen").textContent = "Datos de EJEMPLO (carga tu Excel)";
+  $("fAlb").value = EJEMPLO.doc.albaran; $("fPed").value = EJEMPLO.doc.pedido; $("fProv").value = EJEMPLO.doc.proveedor;
+  LINEAS = EJEMPLO.lineas.map(([ref,desc,cant]) => ({ref,desc,cant}));
+  pintarLineas(); calcular();
+}
 </script>

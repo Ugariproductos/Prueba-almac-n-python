@@ -531,9 +531,9 @@ async function pdfTodos(){
   const dl = await downloadsPromise;
   if (!dl){ est.innerHTML = '<span class="err">Este visor no permite descargar archivos.</span>'; return; }
   try {
-    await dl.save({filename: `Preparacion_${lista.length}_albaranes.pdf`, data: crearPDF(lista).output("blob")});
+    await dl.save({filename: `Preparacion_${lista.length}_albaranes.pdf`, data: crearPDF(lista).output("arraybuffer")});
     est.innerHTML = `<span class="ok">PDF con ${lista.length} albaranes.</span>` + (fallos.length ? ` <span class="err">Sin incluir: ${esc(fallos.join(", "))}</span>` : "");
-  } catch(e){ est.innerHTML = e?.code === "cancelled" || e?.code === "declined" ? "" : '<span class="err">No se pudo descargar el PDF.</span>'; }
+  } catch(e){ est.innerHTML = e?.code === "cancelled" || e?.code === "declined" ? "" : `<span class="err">No se pudo descargar el PDF (${esc(e?.code||"error")}).</span>`; }
 }
 async function guardarTodos(btn){
   const est = $("allEstado"); guardarActivo();
@@ -797,8 +797,8 @@ async function descargarPDF(){
   const nombre = `Preparacion_${(ULTIMO.alb||"albaran").replace(/[^\w\-]+/g,"_")}.pdf`;
   const dl = await downloadsPromise;
   if (!dl){ est.innerHTML = '<span class="err">Este visor no permite descargar archivos.</span>'; return; }
-  try { await dl.save({filename: nombre, data: doc.output("blob")}); est.innerHTML = '<span class="ok">PDF listo para imprimir.</span>'; }
-  catch(e){ est.innerHTML = e?.code === "cancelled" || e?.code === "declined" ? "" : `<span class="err">No se pudo descargar el PDF.</span>`; }
+  try { await dl.save({filename: nombre, data: doc.output("arraybuffer")}); est.innerHTML = '<span class="ok">PDF listo para imprimir.</span>'; }
+  catch(e){ est.innerHTML = e?.code === "cancelled" || e?.code === "declined" ? "" : `<span class="err">No se pudo descargar el PDF (${esc(e?.code||"error")}).</span>`; }
 }
 
 /* ---------- registro de envíos (db) ---------- */

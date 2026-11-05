@@ -228,24 +228,50 @@ def colocacion(bulto, ref):
     return " · ".join(partes)
 
 
-def pasos(bulto):
-    """Instrucciones de colocación, de abajo arriba (vista desde arriba, frente = lado largo delantero)."""
+def _cm(v):
+    return f"{round(v, 1):g}".replace(".", ",")
+
+
+def pasos_datos(bulto):
+    """Pasos de colocación de abajo arriba: una entrada por capa completa (con sus alturas) o capa parcial."""
     orden = list(bulto["contenido"])
     out = []
     for k in bulto["capas"]:
-        ox, oy, oz = k["o"]
         llenos, resto = divmod(k["k"], k["per"])
-        n = orden.index(k["ref"]) + 1
-        orient = f"cada unidad {ox:g} cm a lo largo, {oy:g} a lo ancho, {oz:g} de alto"
+        base = {"ref": k["ref"], "n": orden.index(k["ref"]) + 1, "nx": k["nx"], "ny": k["ny"], "o": tuple(k["o"])}
         if llenos:
-            donde = "En el fondo" if k["z"] < EPS else f"Encima, a {k['z']:g} cm del fondo"
-            out.append(f"{donde}: [{n}] {llenos * k['per']} uds de {k['ref']}, {llenos} altura(s) de "
-                       f"{k['nx']} a lo largo x {k['ny']} a lo ancho ({orient})")
+            out.append({**base, "uds": llenos * k["per"], "alturas": llenos, "cuantos": k["per"],
+                        "z": k["z"], "parcial": False})
         if resto:
-            z = k["z"] + llenos * oz
-            donde = "En el fondo" if z < EPS else f"Encima, a {z:g} cm del fondo"
-            out.append(f"{donde}: [{n}] {resto} uds de {k['ref']}, desde la esquina delantera izquierda, "
-                       f"filas de {k['nx']} ({orient})")
+            out.append({**base, "uds": resto, "alturas": 1, "cuantos": resto,
+                        "z": k["z"] + llenos * k["o"][2], "parcial": True})
+    return out
+
+
+def texto_paso(p):
+    ox, oy, oz = p["o"]
+    donde = "En el fondo de la caja" if p["z"] < EPS else f"Encima, a {_cm(p['z'])} cm del fondo"
+    if p["parcial"]:
+        que = f"{p['uds']} uds de {p['ref']}, empezando por la esquina delantera izquierda y fila a fila"
+    else:
+        que = (f"{p['uds']} uds de {p['ref']}: {p['alturas']} altura{'s' if p['alturas'] > 1 else ''} de "
+               f"{p['nx']} x {p['ny']} ({p['nx']} a lo largo, {p['ny']} a lo ancho)")
+    orient = f"Cada unidad: {_cm(ox)} cm a lo largo · {_cm(oy)} cm a lo ancho · {_cm(oz)} cm de alto"
+    return donde, que, orient
+
+
+def celdas_paso(p):
+    """Rectángulos en planta (x a lo largo, y desde el frente) de las unidades de un paso."""
+    ox, oy, _ = p["o"]
+    return [((i % p["nx"]) * ox, (i // p["nx"]) * oy, ox, oy) for i in range(p["cuantos"])]
+
+
+def pasos(bulto):
+    """Instrucciones de colocación en texto, de abajo arriba."""
+    out = []
+    for p in pasos_datos(bulto):
+        donde, que, orient = texto_paso(p)
+        out.append(f"{donde}: [{p['n']}] {que}. {orient}")
     return out
 
 

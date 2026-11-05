@@ -67,6 +67,15 @@ tr.bad td{background:var(--warn-bg)}
 .det-b div{border:1px solid var(--line);border-radius:4px;padding:8px;background:var(--panel)}
 .det-b b{display:block;margin-bottom:4px}
 .det-b span{display:block;font-size:.84rem;font-family:var(--mono)}
+.tabs{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid var(--line)}
+.tab{background:transparent;color:var(--fg);border:1px solid var(--line);font-family:var(--mono);font-size:.85rem;padding:6px 10px}
+.tab.on{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+#otros{margin-bottom:14px}
+#otros .kv{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px 16px}
+#otros .kv div{display:flex;flex-direction:column;min-width:0}
+#otros small{font-size:.7rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+#otros span{overflow-wrap:anywhere}
+td.extra{font-size:.78rem;color:var(--muted);white-space:normal;min-width:140px}
 .x{padding:2px 8px;background:transparent;color:var(--muted);border:1px solid var(--line)}
 .dot{display:inline-block;width:10px;height:10px;border-radius:2px;vertical-align:middle}
 
@@ -95,6 +104,12 @@ tr.bad td{background:var(--warn-bg)}
 .label ul{list-style:none;margin:0;padding:8px 12px 12px;display:flex;flex-direction:column;gap:5px}
 .label .orden{margin:8px 12px 0;font-size:.72rem;text-transform:uppercase;letter-spacing:.07em;color:var(--muted)}
 .mk{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;color:#fff;font-size:.75rem;font-weight:800}
+.pasos{display:flex;flex-direction:column;gap:12px;padding:6px 12px 14px}
+.paso{display:grid;grid-template-columns:22px 110px minmax(0,1fr);gap:10px;align-items:start}
+.paso svg{width:110px;height:auto;display:block}
+.paso .pn{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:var(--fg);color:var(--bg);font-weight:800;font-size:.8rem}
+.paso b{display:block;font-size:.88rem}
+.paso span:not(.pn){display:block;font-size:.84rem}
 .label li{display:grid;grid-template-columns:20px 46px minmax(0,1fr);gap:8px;align-items:baseline}
 .label li .q{font-family:var(--mono);font-weight:600;text-align:right;font-variant-numeric:tabular-nums}
 .label li .r{font-family:var(--mono);font-weight:600}
@@ -114,7 +129,7 @@ details .tbl{max-height:280px;overflow-y:auto;margin-top:10px}
       <h2>1 · Albarán</h2>
       <div class="drop" id="drop" tabindex="0" role="button" aria-label="Subir albarán">
         <strong>Arrastra aquí el PDF o la foto del albarán</strong>
-        <span class="note">o pulsa para elegir archivo · o pega una imagen con Ctrl+V</span>
+        <span class="note">o pulsa para elegir archivo · o pega una imagen con Ctrl+V · un PDF puede traer varios albaranes</span>
         <input type="file" id="docFile" accept="application/pdf,image/png,image/jpeg,image/webp">
       </div>
       <div class="thumbs" id="thumbs"></div>
@@ -133,12 +148,14 @@ details .tbl{max-height:280px;overflow-y:auto;margin-top:10px}
 
   <section>
     <h2>2 · Datos del albarán</h2>
+    <div id="tabs" class="tabs" hidden></div>
     <div class="doc">
       <div class="field"><label for="fAlb">Nº albarán Ugari</label><input id="fAlb"></div>
       <div class="field"><label for="fPed">Nº pedido cliente</label><input id="fPed"></div>
       <div class="field"><label for="fProv">Cliente</label><input id="fProv" value="El Corte Inglés"></div>
       <div class="field"><label for="fFecha">Fecha albarán</label><input id="fFecha" type="date"></div>
     </div>
+    <div id="otros"></div>
     <div class="tbl"><table id="tLineas"></table></div>
     <div class="row" style="margin-top:10px">
       <button class="ghost" id="add">Añadir línea</button>
@@ -256,7 +273,7 @@ function pintarMaestro(){
 /* ---------- líneas del albarán ---------- */
 function pintarLineas(){
   let malas = 0;
-  $("tLineas").innerHTML = "<tr><th></th><th>Referencia</th><th>Descripción en albarán</th><th>Uds</th><th>En maestro</th><th></th></tr>" +
+  $("tLineas").innerHTML = "<tr><th></th><th>Referencia</th><th>Descripción en albarán</th><th>Uds</th><th>En maestro</th><th>Otros datos</th><th></th></tr>" +
     LINEAS.map((l,i) => {
       const k = buscarRef(l.ref); if (!k) malas++;
       return `<tr class="${k?"":"bad"}">
@@ -265,6 +282,7 @@ function pintarLineas(){
         <td><input data-i="${i}" data-f="desc" id="ld${i}" value="${esc(l.desc)}" aria-label="Descripción"></td>
         <td style="width:90px"><input type="number" min="0" data-i="${i}" data-f="cant" id="lc${i}" value="${l.cant}" aria-label="Unidades"></td>
         <td>${k ? `<span class="ok">✓</span> ${esc(ARTS[k].desc)}` : '<span class="err">No está en el maestro</span>'}</td>
+        <td class="extra">${Object.entries(l.otros||{}).filter(([,v]) => v !== "" && v != null).map(([k,v]) => `${esc(k)}: ${esc(v)}`).join(" · ")}</td>
         <td><button class="x" data-del="${i}" aria-label="Quitar línea">✕</button></td></tr>`;
     }).join("");
   $("avisoLineas").innerHTML = malas ? `<span class="err">${malas} línea(s) sin referencia en el maestro: corrígelas o añádelas al Excel.</span>` : "";
@@ -369,6 +387,50 @@ function colocacion(c, ref){
   }).join(" · ");
 }
 
+
+/* ---------- colocación paso a paso (vista desde arriba) ---------- */
+function pasos(c){
+  const orden = Object.keys(c.contenido), out = [];
+  for (const k of c.capas){
+    const llenos = Math.floor(k.k/k.per), resto = k.k % k.per, n = orden.indexOf(k.ref)+1;
+    if (llenos) out.push({ref:k.ref, n, uds:llenos*k.per, alturas:llenos, nx:k.nx, ny:k.ny, cuantos:k.per, o:k.o, z:k.z});
+    if (resto) out.push({ref:k.ref, n, uds:resto, alturas:1, nx:k.nx, ny:k.ny, cuantos:resto, o:k.o, z:k.z + llenos*k.o[2], parcial:true});
+  }
+  return out;
+}
+function textoPaso(p){
+  const [ox,oy,oz] = p.o;
+  return {
+    donde: p.z < EPS ? "En el fondo de la caja" : `Encima, a ${cm(p.z)} cm del fondo`,
+    que: p.parcial
+      ? `${p.uds} uds de ${p.ref}, empezando por la esquina delantera izquierda y fila a fila`
+      : `${p.uds} uds de ${p.ref}: ${p.alturas} altura${p.alturas>1?"s":""} de ${p.nx} × ${p.ny} (${p.nx} a lo largo, ${p.ny} a lo ancho)`,
+    orient: `Cada unidad: ${cm(ox)} cm a lo largo · ${cm(oy)} cm a lo ancho · ${cm(oz)} cm de alto`
+  };
+}
+function celdasPaso(c, p){   // rectángulos en planta: x a lo largo, y desde el frente
+  const [ox,oy] = p.o, out = [];
+  for (let i = 0; i < p.cuantos; i++){ const ix = i % p.nx, iy = Math.floor(i/p.nx); out.push({x:ix*ox, y:iy*oy, w:ox, h:oy}); }
+  return out;
+}
+function planoSVG(c, p){
+  const T = c.tipo, pad = 1.5, fs = Math.max(2.2, Math.min(p.o[0], p.o[1])*0.45, 0), fsF = Math.max(3, T.l*0.065);
+  const col = colorDe(p.ref);
+  return `<svg viewBox="${-pad} ${-pad} ${T.l+2*pad} ${T.a+2*pad+fsF+1}" role="img" aria-label="Vista desde arriba del paso">
+    <rect x="0" y="0" width="${T.l}" height="${T.a}" fill="var(--kraft-soft)" stroke="var(--kraft-dark)" stroke-width=".8"/>
+    ${celdasPaso(c,p).map(r => `<rect x="${r.x.toFixed(2)}" y="${(T.a-r.y-r.h).toFixed(2)}" width="${r.w.toFixed(2)}" height="${r.h.toFixed(2)}" fill="${col}" stroke="#fff" stroke-width=".4"/>
+      <text x="${(r.x+r.w/2).toFixed(2)}" y="${(T.a-r.y-r.h/2+Math.min(fs,6)*0.35).toFixed(2)}" font-size="${Math.min(fs,6).toFixed(2)}" text-anchor="middle" font-weight="800" font-family="Archivo, sans-serif" fill="#fff">${p.n}</text>`).join("")}
+    <text x="${T.l/2}" y="${T.a+fsF+0.6}" font-size="${fsF.toFixed(2)}" text-anchor="middle" font-weight="700" font-family="Archivo, sans-serif" fill="var(--muted)">▼ FRENTE</text>
+  </svg>`;
+}
+function pasosHTML(c){
+  return `<p class="orden">Colocación paso a paso · vista desde arriba, el frente abajo</p>
+    <div class="pasos">${pasos(c).map((p,i) => { const t = textoPaso(p); return `
+      <div class="paso"><span class="pn">${i+1}</span>${planoSVG(c,p)}
+        <div><b>${esc(t.donde)}</b><span>${esc(t.que)}</span><span class="note">${esc(t.orient)}</span></div></div>`; }).join("")}
+    </div>`;
+}
+
 /* ---------- dibujo a escala (cm), común para SVG y PDF ---------- */
 const PROY = (x,y,z) => [x + y*0.45, -(z + y*0.28)];
 function marco(){   // tamaño del dibujo de la caja más grande: misma escala para todas
@@ -416,6 +478,83 @@ function cajaSVG(c){
 }
 
 const DESC_EXTRA = {};
+/* ---------- varios albaranes ---------- */
+let ALBARANES = [], ACTIVO = -1;
+function guardarActivo(){
+  const a = ALBARANES[ACTIVO]; if (!a) return;
+  Object.assign(a, {alb:$("fAlb").value.trim(), ped:$("fPed").value.trim(), cli:$("fProv").value.trim(), fecha:$("fFecha").value, lineas:LINEAS});
+}
+function activar(i, recalcular = true){
+  guardarActivo(); ACTIVO = i;
+  const a = ALBARANES[i];
+  $("fAlb").value = a.alb || ""; $("fPed").value = a.ped || ""; $("fProv").value = a.cli || "El Corte Inglés"; $("fFecha").value = a.fecha || "";
+  LINEAS = a.lineas; pintarLineas(); pintarOtros(); pintarTabs();
+  if (recalcular){ if (LINEAS.length) calcular(); else $("out").innerHTML = '<p class="note">Este albarán no tiene líneas.</p>'; }
+}
+function pintarTabs(){
+  const t = $("tabs"); t.hidden = ALBARANES.length < 2; if (t.hidden){ t.innerHTML = ""; return; }
+  t.innerHTML = `<span class="note">${ALBARANES.length} albaranes en el documento:</span>` +
+    ALBARANES.map((a,i) => `<button class="tab ${i===ACTIVO?"on":""}" data-tab="${i}">${esc(a.alb || "Albarán " + (i+1))}</button>`).join("") +
+    `<button class="ghost" id="pdfAll">PDF de todos</button><button class="ghost" id="saveAll">Guardar todos en el registro</button><span id="allEstado" class="note"></span>`;
+}
+function pintarOtros(){
+  const o = ALBARANES[ACTIVO]?.otros || {}, ks = Object.keys(o).filter(k => o[k] !== "" && o[k] != null);
+  $("otros").innerHTML = ks.length ? `<h2>Otros datos del albarán</h2><div class="kv">${ks.map(k => `<div><small>${esc(k)}</small><span>${esc(typeof o[k] === "object" ? JSON.stringify(o[k]) : o[k])}</span></div>`).join("")}</div>` : "";
+}
+$("tabs").addEventListener("click", e => {
+  if (e.target.dataset.tab !== undefined) activar(+e.target.dataset.tab);
+  else if (e.target.id === "saveAll") guardarTodos(e.target);
+  else if (e.target.id === "pdfAll") pdfTodos();
+});
+["fAlb","fPed","fProv","fFecha"].forEach(id => $(id).addEventListener("change", () => { guardarActivo(); pintarTabs(); }));
+function pedidoDe(lineas){
+  const pedido = [], fuera = [];
+  for (const l of lineas){
+    if (!(l.cant > 0)) continue;
+    const k = buscarRef(l.ref);
+    if (k) pedido.push([k, l.cant]); else fuera.push(l.ref || "(sin referencia)");
+  }
+  return {pedido, fuera};
+}
+function resultadoDe(a){
+  const {pedido, fuera} = pedidoDe(a.lineas);
+  if (!pedido.length) throw new Error("no tiene líneas con referencia del maestro");
+  return {res: empaquetar(pedido), alb:a.alb || "—", ped:a.ped || "—", cli:a.cli || "Cliente", fecha:a.fecha || "", fuera};
+}
+async function pdfTodos(){
+  const est = $("allEstado"); guardarActivo();
+  if (!window.jspdf){ est.innerHTML = '<span class="err">No se ha cargado el generador de PDF.</span>'; return; }
+  const lista = [], fallos = [];
+  for (const a of ALBARANES){ try { lista.push(resultadoDe(a)); } catch(e){ fallos.push(`${a.alb || "sin número"} (${e.message})`); } }
+  if (!lista.length){ est.innerHTML = '<span class="err">Ningún albarán se puede calcular.</span>'; return; }
+  const dl = await downloadsPromise;
+  if (!dl){ est.innerHTML = '<span class="err">Este visor no permite descargar archivos.</span>'; return; }
+  try {
+    await dl.save({filename: `Preparacion_${lista.length}_albaranes.pdf`, data: crearPDF(lista).output("blob")});
+    est.innerHTML = `<span class="ok">PDF con ${lista.length} albaranes.</span>` + (fallos.length ? ` <span class="err">Sin incluir: ${esc(fallos.join(", "))}</span>` : "");
+  } catch(e){ est.innerHTML = e?.code === "cancelled" || e?.code === "declined" ? "" : '<span class="err">No se pudo descargar el PDF.</span>'; }
+}
+async function guardarTodos(btn){
+  const est = $("allEstado"); guardarActivo();
+  if (!DB){ est.innerHTML = '<span class="err">El registro no está disponible.</span>'; return; }
+  const listos = [], fallos = [];
+  for (const a of ALBARANES){
+    if (!a.alb || !a.ped || !a.fecha){ fallos.push(`${a.alb || "sin número"} (falta albarán, pedido o fecha)`); continue; }
+    try { listos.push({a, r: resultadoDe(a)}); } catch(e){ fallos.push(`${a.alb} (${e.message})`); }
+  }
+  const existen = listos.filter(x => REGISTROS.some(r => r.id === idDoc(x.a.alb)));
+  if (existen.length && btn.dataset.confirmar !== "1"){
+    btn.dataset.confirmar = "1"; btn.textContent = `${existen.length} ya existen: pulsa otra vez para sustituirlos`; return;
+  }
+  btn.disabled = true; let ok = 0;
+  for (const {a, r} of listos){
+    try { await DB.collection("envios").doc(idDoc(a.alb)).set(datosRegistro(r.res, r, a.otros, a.lineas)); ok++; }
+    catch(e){ fallos.push(`${a.alb} (${e.code || "error"})`); }
+  }
+  btn.disabled = false; btn.dataset.confirmar = ""; btn.textContent = "Guardar todos en el registro";
+  est.innerHTML = `<span class="ok">Guardados ${ok}.</span>` + (fallos.length ? ` <span class="err">No guardados: ${esc(fallos.join(", "))}</span>` : "");
+}
+
 const descDe = r => ARTS[r]?.desc ?? DESC_EXTRA[r] ?? "";
 const datosDoc = () => ({alb: $("fAlb").value.trim() || "—", ped: $("fPed").value.trim() || "—",
   cli: $("fProv").value.trim() || "Cliente", fecha: $("fFecha").value || ""});
@@ -427,12 +566,8 @@ const fechaES = iso => /^\d{4}-\d{2}-\d{2}$/.test(iso||"") ? iso.split("-").reve
 function calcular(){
   const out = $("out");
   if (!CAJAS.length){ out.innerHTML = '<p class="err">Carga el Excel con las cajas de envío.</p>'; return; }
-  const pedido = [], fuera = [];
-  for (const l of LINEAS){
-    if (!(l.cant > 0)) continue;
-    const k = buscarRef(l.ref);
-    if (k) pedido.push([k, l.cant]); else fuera.push(l.ref || "(sin referencia)");
-  }
+  guardarActivo();
+  const {pedido, fuera} = pedidoDe(LINEAS);
   if (!pedido.length){ out.innerHTML = '<p class="note">No hay líneas con referencia del maestro y cantidad.</p>'; return; }
   try {
     pintarResultado({res: empaquetar(pedido), ...datosDoc(), fuera, guardado:false});
@@ -473,6 +608,7 @@ function pintarResultado(r){
             <li><span class="mk" style="background:${colorDe(r)}">${j+1}</span><span class="q">${u}</span>
               <span><span class="r">${esc(r)}</span><span class="d">${esc(descDe(r))}</span><span class="d pl">${colocacion(c, r)}</span></span></li>`).join("")}
           </ul>
+          ${pasosHTML(c)}
         </article>`).join("")}
       </div>`;
   $("pdfBtn").onclick = descargarPDF;
@@ -508,9 +644,29 @@ function dibujarCaja(doc, c, x0, yBase, ancho, alto){
   doc.text(`Caja ${c.tipo.nombre} dibujada a escala · ${Math.round(100*c.usado/c.tipo.vol)}% lleno`, x0, yBase + 6);
 }
 
-function crearPDF({res, alb, ped, cli}){
+function crearPDF(lista){
   const {jsPDF} = window.jspdf;
   const doc = new jsPDF({unit:"mm", format:"a4"});
+  lista.forEach((r, i) => { if (i) doc.addPage(); paginasAlbaran(doc, r); });
+  return doc;
+}
+function planoPDF(doc, c, p, x, y, ancho){
+  const T = c.tipo, s = ancho / T.l;
+  doc.setFillColor(240,228,210); doc.setDrawColor(120,90,50); doc.setLineWidth(0.4);
+  doc.rect(x, y, T.l*s, T.a*s, "FD");
+  doc.setFillColor(...rgb(colorDe(p.ref))); doc.setDrawColor(255,255,255); doc.setLineWidth(0.3);
+  const fs = Math.min(p.o[0], p.o[1])*s;
+  for (const r of celdasPaso(c,p)){
+    doc.setFillColor(...rgb(colorDe(p.ref)));
+    doc.rect(x + r.x*s, y + (T.a - r.y - r.h)*s, r.w*s, r.h*s, "FD");
+    if (fs >= 3){ doc.setTextColor(255,255,255); doc.setFont("helvetica","bold"); doc.setFontSize(Math.min(fs*1.6, 12));
+      doc.text(String(p.n), x + (r.x + r.w/2)*s, y + (T.a - r.y - r.h/2)*s + Math.min(fs*1.6,12)*0.13, {align:"center"}); }
+  }
+  doc.setTextColor(110,110,110); doc.setFont("helvetica","bold"); doc.setFontSize(8);
+  doc.text("FRENTE", x + T.l*s/2, y + T.a*s + 4, {align:"center"});
+  return T.a*s + 6;
+}
+function paginasAlbaran(doc, {res, alb, ped, cli, fecha}){
   const M = 14, W = 210 - 2*M, N = res.length;
   const datos = (y) => {
     doc.setDrawColor(30,30,30); doc.setLineWidth(0.6);
@@ -525,7 +681,10 @@ function crearPDF({res, alb, ped, cli}){
   doc.setFont("helvetica","bold"); doc.setFontSize(24); doc.setTextColor(20,20,20);
   doc.text("HOJA DE PREPARACIÓN", M, M+10);
   datos(M+16);
-  doc.setFontSize(18); doc.text(`${N} BULTO${N>1?"S":""}`, M, M+50);
+  doc.setFont("helvetica","normal"); doc.setFontSize(11); doc.setTextColor(60,60,60);
+  doc.text(`Fecha del albarán: ${fechaES(fecha)}`, M, M+42);
+  doc.setFont("helvetica","bold"); doc.setFontSize(18); doc.setTextColor(20,20,20);
+  doc.text(`${N} BULTO${N>1?"S":""}`, M, M+52);
   let y = M+60;
   doc.setFontSize(9); doc.setTextColor(90,90,90);
   ["BULTO","CAJA","MEDIDAS EXTERIORES (cm)","REFS.","UDS."].forEach((t,i)=>doc.text(t, M+[0,22,70,140,162][i], y));
@@ -588,8 +747,44 @@ function crearPDF({res, alb, ped, cli}){
     });
     doc.setFont("helvetica","normal"); doc.setFontSize(10); doc.setTextColor(60,60,60);
     doc.text("Preparado por: ______________________     Fecha: ____________     Revisado: ______________", M, 287);
+
+    // colocación paso a paso
+    const ps = pasos(c);
+    const cabPasos = (cont) => {
+      doc.addPage();
+      doc.setFillColor(20,20,20); doc.rect(M, M, W, 12, "F");
+      doc.setTextColor(255,255,255); doc.setFont("helvetica","bold"); doc.setFontSize(15);
+      doc.text(`BULTO ${i+1} / ${N} · ${c.tipo.nombre} ${c.tipo.l}×${c.tipo.a}×${c.tipo.h} cm`, M+4, M+8.3);
+      doc.setFontSize(10); doc.text(`Pedido ${ped} · Albarán ${alb}`, M+W-4, M+8, {align:"right"});
+      doc.setTextColor(20,20,20); doc.setFontSize(13);
+      doc.text(`COLOCACIÓN PASO A PASO${cont ? " (continuación)" : ""}`, M, M+22);
+      doc.setFont("helvetica","normal"); doc.setFontSize(9.5); doc.setTextColor(90,90,90);
+      doc.text("Vista desde arriba de cada capa. El lado marcado FRENTE es el frente de la caja. Empieza por el paso 1 (fondo).", M, M+28);
+      return M+36;
+    };
+    let yp = cabPasos(false);
+    ps.forEach((p, k) => {
+      const anchoPlano = 62, alto = c.tipo.a * anchoPlano / c.tipo.l + 6, fila = Math.max(alto, 30) + 6;
+      if (yp + fila > 285) yp = cabPasos(true);
+      doc.setFillColor(20,20,20); doc.circle(M+5, yp+5, 5, "F");
+      doc.setTextColor(255,255,255); doc.setFont("helvetica","bold"); doc.setFontSize(13);
+      doc.text(String(k+1), M+5, yp+6.6, {align:"center"});
+      planoPDF(doc, c, p, M+14, yp, anchoPlano);
+      const t = textoPaso(p), xt = M+14+anchoPlano+8, wt = W-(xt-M);
+      doc.setTextColor(20,20,20); doc.setFont("helvetica","bold"); doc.setFontSize(12);
+      doc.text(t.donde, xt, yp+5);
+      doc.setFillColor(...rgb(colorDe(p.ref))); doc.circle(xt+2.5, yp+11.2, 2.5, "F");
+      doc.setTextColor(255,255,255); doc.setFontSize(9); doc.text(String(p.n), xt+2.5, yp+12.4, {align:"center"});
+      doc.setTextColor(20,20,20); doc.setFont("helvetica","normal"); doc.setFontSize(11);
+      const lq = doc.splitTextToSize(t.que, wt-8); doc.text(lq, xt+7, yp+12.5);
+      doc.setFontSize(9.5); doc.setTextColor(80,80,80);
+      doc.text(doc.splitTextToSize(descDe(p.ref), wt), xt, yp+13 + lq.length*5);
+      doc.text(doc.splitTextToSize(t.orient, wt), xt, yp+18 + lq.length*5);
+      doc.setDrawColor(30,30,30); doc.setLineWidth(0.4); doc.rect(M+W-7, yp, 6, 6);
+      doc.setDrawColor(210,210,210); doc.line(M, yp+fila-3, M+W, yp+fila-3);
+      yp += fila;
+    });
   });
-  return doc;
 }
 
 async function descargarPDF(){
@@ -597,7 +792,7 @@ async function descargarPDF(){
   if (!ULTIMO) return;
   if (!window.jspdf){ est.innerHTML = '<span class="err">No se ha cargado el generador de PDF. Recarga la página.</span>'; return; }
   Object.assign(ULTIMO, datosDoc());
-  const doc = crearPDF(ULTIMO);
+  const doc = crearPDF([ULTIMO]);
   const nombre = `Preparacion_${(ULTIMO.alb||"albaran").replace(/[^\w\-]+/g,"_")}.pdf`;
   const dl = await downloadsPromise;
   if (!dl){ est.innerHTML = '<span class="err">Este visor no permite descargar archivos.</span>'; return; }
@@ -663,15 +858,7 @@ async function guardarRegistro(){
   if (alb === "—"){ est.innerHTML = '<span class="err">Falta el nº de albarán Ugari.</span>'; return; }
   if (ped === "—"){ est.innerHTML = '<span class="err">Falta el nº de pedido del cliente.</span>'; return; }
   if (!fecha){ est.innerHTML = '<span class="err">Falta la fecha del albarán.</span>'; return; }
-  const docData = {
-    albaran: alb, pedido_cliente: ped, cliente: cli, fecha_albaran: fecha, guardado: new Date().toISOString(),
-    bultos: res.map(c => ({
-      caja: c.tipo.nombre, medidas: `${c.tipo.l}x${c.tipo.a}x${c.tipo.h}`, l: c.tipo.l, a: c.tipo.a, h: c.tipo.h,
-      usado: Math.round(c.usado),
-      contenido: Object.entries(c.contenido).map(([ref,uds]) => ({ref, uds, desc: descDe(ref), colocacion: colocacion(c, ref)})),
-      capas: c.capas.map(k => ({ref:k.ref, z:k.z, o:k.o, nx:k.nx, ny:k.ny, per:k.per, k:k.k, niveles:k.niveles, usado:k.usado}))
-    }))
-  };
+  const docData = datosRegistro(res, {alb, ped, cli, fecha}, ALBARANES[ACTIVO]?.otros, LINEAS);
   const ref = DB.collection("envios").doc(idDoc(alb));
   btn.disabled = true;
   try {
@@ -688,6 +875,19 @@ async function guardarRegistro(){
     est.innerHTML = `<span class="err">No se pudo guardar (${esc(e.code||"error")}).</span>`;
   }
 }
+function datosRegistro(res, {alb, ped, cli, fecha}, otros, lineas){
+  return {
+    albaran: alb, pedido_cliente: ped, cliente: cli, fecha_albaran: fecha, guardado: new Date().toISOString(),
+    otros_datos: otros || {},
+    lineas_albaran: (lineas || []).map(l => ({ref:l.ref, desc:l.desc || "", cant:l.cant, otros:l.otros || {}})),
+    bultos: res.map(c => ({
+      caja: c.tipo.nombre, medidas: `${c.tipo.l}x${c.tipo.a}x${c.tipo.h}`, l: c.tipo.l, a: c.tipo.a, h: c.tipo.h,
+      usado: Math.round(c.usado),
+      contenido: Object.entries(c.contenido).map(([ref,uds]) => ({ref, uds, desc: descDe(ref), colocacion: colocacion(c, ref)})),
+      capas: c.capas.map(k => ({ref:k.ref, z:k.z, o:k.o, nx:k.nx, ny:k.ny, per:k.per, k:k.k, niveles:k.niveles, usado:k.usado}))
+    }))
+  };
+}
 
 function abrirRegistro(r){
   if (!r) return;
@@ -698,7 +898,11 @@ function abrirRegistro(r){
     contenido: Object.fromEntries(b.contenido.map(x => [x.ref, x.uds])),
     usado: b.usado
   }));
-  $("fAlb").value = r.albaran; $("fPed").value = r.pedido_cliente; $("fProv").value = r.cliente; $("fFecha").value = r.fecha_albaran;
+  ACTIVO = -1;
+  ALBARANES = [{alb:r.albaran, ped:r.pedido_cliente, cli:r.cliente, fecha:r.fecha_albaran, otros:r.otros_datos || {},
+    lineas: (r.lineas_albaran || r.bultos.flatMap(b => b.contenido.map(x => ({ref:x.ref, desc:x.desc, cant:x.uds}))))
+      .map(l => ({ref:l.ref, desc:l.desc || "", cant:l.cant, otros:l.otros || {}}))}];
+  activar(0, false);
   pintarResultado({res, alb:r.albaran, ped:r.pedido_cliente, cli:r.cliente, fecha:r.fecha_albaran, guardado:true});
   $("out").scrollIntoView({behavior:"smooth", block:"start"});
 }
@@ -707,20 +911,20 @@ iniciarRegistro();
 /* ---------- lectura del albarán ---------- */
 let samplePromise = window.claude?.use ? window.claude.use("sample") : Promise.resolve(null);
 
-async function pdfAImagenes(file){
+async function abrirPDF(file){
   pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
-  const pdf = await pdfjsLib.getDocument({data: await file.arrayBuffer()}).promise;
-  const imgs = [], textos = [];
-  for (let p = 1; p <= Math.min(pdf.numPages, 3); p++){
-    const page = await pdf.getPage(p);
-    const tc = await page.getTextContent();
-    textos.push(tc.items.map(it => it.str).join(" "));
-    const vp = page.getViewport({scale: 2});
-    const cv = document.createElement("canvas"); cv.width = vp.width; cv.height = vp.height;
-    await page.render({canvasContext: cv.getContext("2d"), viewport: vp}).promise;
-    imgs.push(cv);
-  }
-  return {canvases: imgs, texto: textos.join("\n---\n").trim()};
+  return pdfjsLib.getDocument({data: await file.arrayBuffer()}).promise;
+}
+async function paginaPDF(pdf, n, escala){
+  const page = await pdf.getPage(n);
+  const vp = page.getViewport({scale: escala});
+  const cv = document.createElement("canvas"); cv.width = vp.width; cv.height = vp.height;
+  await page.render({canvasContext: cv.getContext("2d"), viewport: vp}).promise;
+  return cv;
+}
+async function textoPDF(pdf, n){
+  const tc = await (await pdf.getPage(n)).getTextContent();
+  return tc.items.map(it => it.str).join(" ").trim();
 }
 function imagenACanvas(file){
   return new Promise((ok, ko) => {
@@ -747,55 +951,96 @@ async function trozos(canvases, max){
   return blobs.slice(0, max);
 }
 
+const MAX_PAGINAS = 40;
+function promptLectura(desde, hasta, total, conImgs, texto){
+  const refs = Object.values(ARTS).slice(0, 400).map(a => `${a.ref} | ${a.desc}`).join("\n");
+  return `Eres un operario de almacén. Te paso ${total > 1 ? `las páginas ${desde} a ${hasta} (de ${total}) de un documento` : "un documento"} con uno o varios albaranes de entrega emitidos por Ugari (nuestra empresa) a clientes, normalmente El Corte Inglés${conImgs ? " (imágenes; las páginas altas van partidas en dos trozos con un poco de solape: no dupliques líneas)" : ""}${texto ? " y el texto extraído del PDF" : ""}.
+Un albarán puede ocupar varias páginas, y estas páginas pueden empezar con la continuación de un albarán de páginas anteriores.
+Para CADA albarán que aparezca extrae TODOS sus datos:
+- numero_albaran: número del albarán de Ugari.
+- pedido_cliente: número de pedido del CLIENTE (El Corte Inglés) que figura en el albarán (su pedido, nº pedido, pedido ECI, order no.). No uses el número del albarán.
+- cliente: nombre del cliente.
+- fecha: fecha del albarán en formato AAAA-MM-DD. Las fechas españolas van día/mes/año.
+- otros_datos: objeto con TODOS los demás datos de cabecera y pie que aparezcan, con su etiqueta tal como figura (por ejemplo dirección de entrega, centro o tienda, departamento, código de proveedor, nº de bultos, peso, transportista, forma de pago, observaciones, totales, fecha de entrega). Valores como texto.
+- lineas: cada artículo con ref (código del artículo), ean (si aparece), descripcion, cantidad en UNIDADES (número; si viene en cajas y se indican unidades por caja, multiplica) y otros: objeto con el resto de columnas de esa línea (precio, descuento, importe, lote, unidades por caja, etc.).
+- continua_anterior: true si es la continuación de un albarán cuya cabecera no aparece en estas páginas; en ese caso deja numero_albaran como "" si no aparece.
+Si una referencia coincide con una de nuestro maestro (lista abajo, "ref | descripción"), usa exactamente la referencia del maestro.
+No inventes nada: si un dato no aparece, déjalo como "".
+Responde solo con JSON: {"albaranes":[{"numero_albaran":"","pedido_cliente":"","cliente":"","fecha":"","otros_datos":{},"lineas":[{"ref":"","ean":"","descripcion":"","cantidad":0,"otros":{}}],"continua_anterior":false}]}
+
+Maestro:
+${refs}
+${texto ? "\nTexto del PDF:\n" + texto.slice(0, 60000) : ""}`;
+}
+function unirAlbaranes(encontrados){
+  const lista = [];
+  for (const x of encontrados){
+    const num = String(x.numero_albaran || "").trim();
+    let dest = num ? lista.find(a => norm(a.alb) === norm(num)) : null;
+    if (!dest && !num && lista.length) dest = lista[lista.length-1];
+    const lineas = (Array.isArray(x.lineas) ? x.lineas : []).map(l => {
+      const otros = {...(l.otros && typeof l.otros === "object" ? l.otros : {})};
+      if (l.ean) otros.EAN = String(l.ean);
+      return {ref:String(l.ref || "").trim(), desc:String(l.descripcion || ""), cant:parseInt(l.cantidad,10) || 0, otros};
+    });
+    const otros = x.otros_datos && typeof x.otros_datos === "object" ? x.otros_datos : {};
+    if (dest){
+      dest.alb ||= num; dest.ped ||= String(x.pedido_cliente || ""); dest.cli ||= String(x.cliente || ""); dest.fecha ||= aISO(x.fecha);
+      for (const [k,v] of Object.entries(otros)) if (v !== "" && v != null && !dest.otros[k]) dest.otros[k] = v;
+      dest.lineas.push(...lineas);
+    } else {
+      lista.push({alb:num, ped:String(x.pedido_cliente || ""), cli:String(x.cliente || "") || "El Corte Inglés", fecha:aISO(x.fecha), otros:{...otros}, lineas});
+    }
+  }
+  return lista;
+}
+
 async function procesarDocumento(file){
   const est = $("leerEstado");
   const sample = await samplePromise;
   if (!sample){ est.innerHTML = '<span class="err">La lectura automática no está disponible aquí. Escribe las líneas a mano.</span>'; return; }
   try {
     est.textContent = "Preparando el documento…";
-    let canvases, texto = "";
-    if (file.type === "application/pdf" || /\.pdf$/i.test(file.name)) ({canvases, texto} = await pdfAImagenes(file));
-    else canvases = [await imagenACanvas(file)];
+    const esPDF = file.type === "application/pdf" || /\.pdf$/i.test(file.name);
+    let pdf = null, total = 1, imagen = null;
+    if (esPDF){ pdf = await abrirPDF(file); total = Math.min(pdf.numPages, MAX_PAGINAS); }
+    else imagen = await imagenACanvas(file);
+
     $("thumbs").innerHTML = "";
-    canvases.forEach(cv => { const im = new Image(); im.src = cv.toDataURL("image/jpeg", .6); im.alt = "Página del albarán"; $("thumbs").appendChild(im); });
+    for (let n = 1; n <= total; n++){
+      const cv = pdf ? await paginaPDF(pdf, n, 0.35) : imagen;
+      const im = new Image(); im.src = cv.toDataURL("image/jpeg", .6); im.alt = `Página ${n}`; $("thumbs").appendChild(im);
+    }
 
     const lim = await sample.limits().catch(() => null);
     const maxImgs = lim?.images?.maxCount || 0;
-    const imgs = maxImgs ? await trozos(canvases, maxImgs) : [];
-    if (!imgs.length && !texto){ est.innerHTML = '<span class="err">Este visor no puede enviar imágenes a Claude. Prueba con un PDF que tenga texto.</span>'; return; }
-
-    const refs = Object.values(ARTS).slice(0, 400).map(a => `${a.ref} | ${a.desc}`).join("\n");
-    const prompt = `Eres un operario de almacén. Te paso un albarán de entrega emitido por Ugari (nuestra empresa) a un cliente, normalmente El Corte Inglés${imgs.length?" (imágenes; las páginas altas van partidas en dos trozos con un poco de solape, no dupliques líneas)":""}${texto?" y el texto extraído del PDF":""}.
-Extrae:
-- numero_albaran: el número del albarán de Ugari.
-- pedido_proveedor: el número de pedido del CLIENTE (El Corte Inglés) que aparece en el albarán (su pedido, nº pedido cliente, pedido ECI, order no.). No uses el número del albarán.
-- proveedor: nombre del cliente al que va el albarán.
-- fecha: fecha del albarán en formato AAAA-MM-DD (por ejemplo 2026-11-05). Las fechas españolas van día/mes/año.
-- lineas: cada artículo con referencia (código del artículo), descripcion y cantidad en UNIDADES (número). Si la cantidad viene en cajas y el albarán indica unidades por caja, multiplica.
-Si una referencia del albarán coincide con una de nuestro maestro (lista abajo, "ref | descripción"), usa exactamente la referencia del maestro.
-No inventes nada: si un dato no aparece, déjalo como "".
-Responde solo con JSON: {"numero_albaran":"","pedido_proveedor":"","proveedor":"","fecha":"","lineas":[{"ref":"","descripcion":"","cantidad":0}]}
-
-Maestro:
-${refs}
-${texto ? "\nTexto del PDF:\n" + texto.slice(0, 30000) : ""}`;
-
-    est.textContent = "Claude está leyendo el albarán… (puede tardar hasta un minuto)";
-    const r = await sample.json(prompt, imgs.length ? {images: imgs} : {});
-    $("fAlb").value = r.numero_albaran || "";
-    $("fPed").value = r.pedido_proveedor || "";
-    $("fProv").value = r.proveedor || "El Corte Inglés";
-    $("fFecha").value = aISO(r.fecha);
-    LINEAS = (Array.isArray(r.lineas) ? r.lineas : []).map(l => ({ref:String(l.ref||"").trim(), desc:String(l.descripcion||""), cant:parseInt(l.cantidad,10)||0}));
-    pintarLineas();
-    est.innerHTML = `<span class="ok">Leídas ${LINEAS.length} líneas.</span> Revisa los datos y las cantidades antes de calcular.`;
-    if (LINEAS.length) calcular();
+    const porLlamada = maxImgs ? Math.max(1, Math.min(3, Math.floor(maxImgs/2))) : 3;
+    const encontrados = [];
+    for (let desde = 1; desde <= total; desde += porLlamada){
+      const hasta = Math.min(total, desde + porLlamada - 1);
+      est.textContent = total > 1 ? `Claude está leyendo las páginas ${desde}–${hasta} de ${total}…` : "Claude está leyendo el albarán… (puede tardar hasta un minuto)";
+      const canvases = [], textos = [];
+      for (let n = desde; n <= hasta; n++){
+        canvases.push(pdf ? await paginaPDF(pdf, n, 2) : imagen);
+        if (pdf) textos.push(await textoPDF(pdf, n));
+      }
+      const imgs = maxImgs ? await trozos(canvases, maxImgs) : [];
+      const texto = textos.filter(Boolean).map((t,k) => `[Página ${desde+k}]\n${t}`).join("\n\n");
+      if (!imgs.length && !texto){ est.innerHTML = '<span class="err">Este visor no puede enviar imágenes a Claude. Prueba con un PDF que tenga texto.</span>'; return; }
+      const r = await sample.json(promptLectura(desde, hasta, total, imgs.length > 0, texto), imgs.length ? {images: imgs} : {});
+      encontrados.push(...(Array.isArray(r?.albaranes) ? r.albaranes : [r]));
+    }
+    const lista = unirAlbaranes(encontrados);
+    if (!lista.length){ est.innerHTML = '<span class="err">No he encontrado ningún albarán en el documento.</span>'; return; }
+    ACTIVO = -1; ALBARANES = lista; activar(0);
+    const nl = lista.reduce((s,a) => s + a.lineas.length, 0);
+    est.innerHTML = `<span class="ok">Leídos ${lista.length} albarán${lista.length>1?"es":""} con ${nl} líneas${pdf && pdf.numPages > MAX_PAGINAS ? ` (solo las primeras ${MAX_PAGINAS} páginas)` : ""}.</span> Revisa los datos antes de guardar.`;
   } catch(e){
     const msg = {not_granted:"No has permitido que la página use Claude. Puedes escribir las líneas a mano.",
       rate_limited:"Demasiadas lecturas seguidas. Espera un poco y vuelve a subirlo.",
       image_rejected:"La imagen no es válida o es demasiado grande.",
-      invalid_json:"Claude no devolvió las líneas en el formato esperado. Vuelve a subir el albarán.",
-      images_unavailable:"Este visor no puede enviar imágenes a Claude."}[e?.code] || (e?.message ? `No se pudo leer el albarán: ${e.message}` : "No se pudo leer el albarán.");
+      invalid_json:"Claude no devolvió los datos en el formato esperado. Vuelve a subir el documento.",
+      images_unavailable:"Este visor no puede enviar imágenes a Claude."}[e?.code] || (e?.message ? `No se pudo leer el documento: ${e.message}` : "No se pudo leer el documento.");
     est.innerHTML = `<span class="err">${esc(msg)}</span>`;
   }
 }
@@ -831,13 +1076,13 @@ try { guardado = JSON.parse(localStorage.getItem("maestro") || "null"); } catch(
 if (guardado?.arts?.length && guardado?.cajas?.length){
   cargarMaestro(guardado.arts, guardado.cajas);
   $("origen").textContent = `${guardado.nombre}: ${guardado.arts.length} artículos, ${guardado.cajas.length} cajas`;
-  pintarLineas();
+  ALBARANES = [{alb:"", ped:"", cli:"El Corte Inglés", fecha:"", otros:{}, lineas:[]}]; activar(0, false);
   $("out").innerHTML = '<p class="note">Sube o pega un albarán para ver los bultos.</p>';
 } else {
   cargarMaestro(EJEMPLO.arts, EJEMPLO.cajas);
   $("origen").textContent = "Datos de EJEMPLO (carga tu Excel)";
-  $("fAlb").value = EJEMPLO.doc.albaran; $("fPed").value = EJEMPLO.doc.pedido; $("fProv").value = EJEMPLO.doc.proveedor;
-  LINEAS = EJEMPLO.lineas.map(([ref,desc,cant]) => ({ref,desc,cant}));
-  pintarLineas(); calcular();
+  ALBARANES = [{alb:EJEMPLO.doc.albaran, ped:EJEMPLO.doc.pedido, cli:EJEMPLO.doc.proveedor, fecha:"", otros:{},
+    lineas: EJEMPLO.lineas.map(([ref,desc,cant]) => ({ref, desc, cant}))}];
+  activar(0);
 }
 </script>

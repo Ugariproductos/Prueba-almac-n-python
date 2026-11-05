@@ -228,6 +228,27 @@ def colocacion(bulto, ref):
     return " · ".join(partes)
 
 
+def pasos(bulto):
+    """Instrucciones de colocación, de abajo arriba (vista desde arriba, frente = lado largo delantero)."""
+    orden = list(bulto["contenido"])
+    out = []
+    for k in bulto["capas"]:
+        ox, oy, oz = k["o"]
+        llenos, resto = divmod(k["k"], k["per"])
+        n = orden.index(k["ref"]) + 1
+        orient = f"cada unidad {ox:g} cm a lo largo, {oy:g} a lo ancho, {oz:g} de alto"
+        if llenos:
+            donde = "En el fondo" if k["z"] < EPS else f"Encima, a {k['z']:g} cm del fondo"
+            out.append(f"{donde}: [{n}] {llenos * k['per']} uds de {k['ref']}, {llenos} altura(s) de "
+                       f"{k['nx']} a lo largo x {k['ny']} a lo ancho ({orient})")
+        if resto:
+            z = k["z"] + llenos * oz
+            donde = "En el fondo" if z < EPS else f"Encima, a {z:g} cm del fondo"
+            out.append(f"{donde}: [{n}] {resto} uds de {k['ref']}, desde la esquina delantera izquierda, "
+                       f"filas de {k['nx']} ({orient})")
+    return out
+
+
 def imprimir(bultos, articulos, albaran="", pedido=""):
     if not bultos:
         print("Pedido vacío.")
@@ -245,6 +266,9 @@ def imprimir(bultos, articulos, albaran="", pedido=""):
         print("  Colocar de abajo arriba:")
         for j, (ref, uds) in enumerate(b["contenido"].items(), 1):
             print(f"   {j}. {uds:>4} x {ref}  {articulos[ref]['desc']}  [{colocacion(b, ref)}]")
+        print("  Colocación paso a paso:")
+        for n, t in enumerate(pasos(b), 1):
+            print(f"   Paso {n}. {t}")
 
 
 # ---------- menú ----------

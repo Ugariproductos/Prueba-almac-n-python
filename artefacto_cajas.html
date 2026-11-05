@@ -1,0 +1,258 @@
+<title>Cajas por pedido</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;800&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: hoja de expedición — panel de datos a la izquierda, resultado de cajas a la derecha */
+:root{
+  --bg:#f3f1ec; --panel:#fffdf8; --fg:#1f2421; --muted:#6b6f68; --line:#d9d5ca;
+  --kraft:#b8864b; --kraft-soft:#ead9c0; --ok:#3d7a4f; --err:#b23a2e;
+  --display:"Archivo",system-ui,sans-serif; --mono:"IBM Plex Mono",ui-monospace,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#181a17; --panel:#21241f; --fg:#ebe7dd; --muted:#9a9c92; --line:#3a3d36;
+  --kraft:#d4a266; --kraft-soft:#3f3324; --ok:#7cc08f; --err:#e8786b; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#181a17; --panel:#21241f; --fg:#ebe7dd; --muted:#9a9c92; --line:#3a3d36;
+  --kraft:#d4a266; --kraft-soft:#3f3324; --ok:#7cc08f; --err:#e8786b; color-scheme:dark}
+body{background:var(--bg);color:var(--fg);font-family:var(--display);font-size:15px;line-height:1.45}
+.wrap{max-width:1180px;margin:0 auto;padding-block:24px 48px;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+h1{font-weight:800;font-size:1.9rem;letter-spacing:-.02em;margin:0;text-wrap:balance}
+.sub{color:var(--muted);margin:4px 0 20px}
+.grid{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,6fr);gap:20px;align-items:start}
+@media (max-width:860px){.grid{grid-template-columns:1fr}}
+section{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:16px;min-width:0}
+.stack{display:flex;flex-direction:column;gap:20px;min-width:0}
+h2{font-size:.78rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:0 0 10px;font-weight:600}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+button,input,select{font:inherit;color:inherit}
+button{background:var(--fg);color:var(--bg);border:0;border-radius:4px;padding:8px 14px;font-weight:600;cursor:pointer}
+button.ghost{background:transparent;color:var(--fg);border:1px solid var(--line)}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--kraft);outline-offset:2px}
+input,select{background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:7px 9px;min-width:0}
+.file{display:inline-flex;align-items:center;gap:8px;border:1px dashed var(--kraft);border-radius:4px;padding:8px 12px;cursor:pointer}
+.file input{display:none}
+.note{font-size:.85rem;color:var(--muted)}
+.tbl{overflow-x:auto;max-height:260px;overflow-y:auto}
+table{border-collapse:collapse;width:100%;font-size:.86rem}
+th,td{text-align:left;padding:5px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+th{font-weight:600;color:var(--muted);font-size:.75rem;text-transform:uppercase;letter-spacing:.05em;position:sticky;top:0;background:var(--panel)}
+td.n{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums}
+.lines{display:flex;flex-direction:column;gap:6px;margin-bottom:10px}
+.line{display:grid;grid-template-columns:minmax(0,1fr) 90px 34px;gap:6px}
+.line button{padding:0;background:transparent;color:var(--muted);border:1px solid var(--line)}
+.err{color:var(--err);font-weight:600}
+.total{display:flex;gap:16px;flex-wrap:wrap;align-items:baseline;margin-bottom:14px}
+.total b{font-size:2.4rem;font-weight:800;line-height:1}
+.chip{font-family:var(--mono);font-size:.85rem;background:var(--kraft-soft);border-radius:3px;padding:3px 8px}
+.boxes{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
+.box{border:2px solid var(--kraft);border-radius:4px;padding:12px;background:var(--bg);display:flex;flex-direction:column;gap:8px}
+.box header{display:flex;justify-content:space-between;gap:8px;align-items:baseline}
+.box header strong{font-size:1.05rem}
+.dim{font-family:var(--mono);font-size:.8rem;color:var(--muted)}
+.bar{height:8px;background:var(--kraft-soft);border-radius:2px;overflow:hidden}
+.bar i{display:block;height:100%;background:var(--kraft)}
+.box ul{list-style:none;margin:0;padding:0;font-size:.88rem;display:flex;flex-direction:column;gap:3px}
+.box li{display:grid;grid-template-columns:44px minmax(0,1fr);gap:6px}
+.box li span:first-child{font-family:var(--mono);text-align:right}
+.box li span:last-child{overflow-wrap:anywhere}
+</style>
+
+<div class="wrap">
+  <h1>Cajas por pedido</h1>
+  <p class="sub">Carga tu Excel de artículos y cajas, escribe el pedido y te dice cuántas cajas de envío usar y qué va en cada una.</p>
+
+  <div class="grid">
+    <div class="stack">
+      <section>
+        <h2>1 · Datos</h2>
+        <div class="row">
+          <label class="file" for="xls">Cargar Excel (.xlsx)<input type="file" id="xls" accept=".xlsx,.xls"></label>
+          <span class="note" id="origen">Usando datos de EJEMPLO</span>
+        </div>
+        <p class="note">Hoja de artículos: Referencia, Descripción, Largo, Ancho, Alto (cm, de la caja del artículo), Uds por caja. Hoja de cajas: Caja, Largo, Ancho, Alto. Para añadir productos, añade filas al Excel y vuelve a cargarlo.</p>
+        <div class="row" style="margin-top:8px">
+          <label for="aprov" class="note">Aprovechamiento de la caja</label>
+          <input type="number" id="aprov" min="50" max="100" value="90" style="width:80px"> <span class="note">%</span>
+        </div>
+      </section>
+      <section>
+        <h2>Cajas de envío</h2>
+        <div class="tbl"><table id="tCajas"></table></div>
+      </section>
+      <section>
+        <h2>Artículos</h2>
+        <div class="tbl"><table id="tArt"></table></div>
+      </section>
+    </div>
+
+    <div class="stack">
+      <section>
+        <h2>2 · Pedido</h2>
+        <div class="lines" id="lines"></div>
+        <div class="row">
+          <button class="ghost" id="add">Añadir línea</button>
+          <button id="calc">Calcular cajas</button>
+        </div>
+      </section>
+      <section>
+        <h2>3 · Resultado</h2>
+        <div id="out"></div>
+      </section>
+    </div>
+  </div>
+</div>
+
+<script>
+const EPS = 1e-9;
+let ARTS = {}, CAJAS = [];
+
+const EJEMPLO = {
+  arts: [["EJ-001","EJEMPLO Pañal adulto talla M (paquete)",60,40,40,4],
+         ["EJ-002","EJEMPLO Empapador 60x90 (paquete)",50,35,30,6],
+         ["EJ-003","EJEMPLO Crema barrera 200 ml",30,20,15,24],
+         ["EJ-004","EJEMPLO Guantes nitrilo (caja 100)",50,25,25,10]],
+  cajas: [["EJ Pequeña",30,20,20],["EJ Mediana",40,30,30],["EJ Grande",60,40,40]],
+  pedido: [["EJ-001",6],["EJ-002",5],["EJ-003",30],["EJ-004",3]]
+};
+
+const num = v => (v === null || v === undefined || v === "") ? null : parseFloat(String(v).replace(",", "."));
+const col = (cab, ...k) => cab.findIndex(c => k.some(x => String(c ?? "").toLowerCase().includes(x)));
+const fmt = n => Math.round(n).toLocaleString("es-ES");
+
+function cargarFilas(arts, cajas){
+  ARTS = {}; CAJAS = [];
+  for (const [ref, desc, l, a, h, uds] of arts){
+    ARTS[ref] = {ref, desc, medidas:`${l}x${a}x${h}`, uds:uds||1, vol_ud: l*a*h/(uds||1)};
+  }
+  for (const [nombre, l, a, h] of cajas) CAJAS.push({nombre, medidas:`${l}x${a}x${h}`, vol:l*a*h});
+}
+
+function leerLibro(wb){
+  const arts = [], cajas = [];
+  for (const name of wb.SheetNames){
+    const filas = XLSX.utils.sheet_to_json(wb.Sheets[name], {header:1, blankrows:false});
+    if (!filas.length) continue;
+    const cab = filas[0];
+    const iL = col(cab,"largo"), iA = col(cab,"ancho"), iH = col(cab,"alto");
+    if (iL < 0 || iA < 0 || iH < 0) continue;
+    const iRef = col(cab,"ref","código","codigo");
+    if (iRef >= 0){
+      const iD = col(cab,"desc","nombre"), iU = col(cab,"uds","unidades","cantidad");
+      for (const f of filas.slice(1)){
+        if (f[iRef] === undefined || f[iRef] === "") continue;
+        arts.push([String(f[iRef]).trim(), iD>=0 ? String(f[iD]??"") : "", num(f[iL]), num(f[iA]), num(f[iH]), iU>=0 ? num(f[iU]) : 1]);
+      }
+    } else {
+      let iN = col(cab,"caja","nombre","tipo"); if (iN < 0) iN = 0;
+      for (const f of filas.slice(1)){
+        if (f[iN] === undefined || f[iN] === "") continue;
+        cajas.push([String(f[iN]).trim(), num(f[iL]), num(f[iA]), num(f[iH])]);
+      }
+    }
+  }
+  if (!arts.length) throw new Error("No encuentro la hoja de artículos (falta la columna Referencia).");
+  if (!cajas.length) throw new Error("No encuentro la hoja de cajas de envío (Caja, Largo, Ancho, Alto).");
+  return {arts, cajas};
+}
+
+// Mismo algoritmo que empaquetado.py
+function empaquetar(pedido, aprov){
+  const tipos = [...CAJAS].sort((a,b)=>a.vol-b.vol);
+  const grande = tipos[tipos.length-1], cap = grande.vol*aprov;
+  const lineas = pedido.map(([ref,cant]) => {
+    if (!ARTS[ref]) throw new Error(`Referencia desconocida: ${ref}`);
+    const vol = ARTS[ref].vol_ud;
+    if (vol > cap + EPS) throw new Error(`${ref}: una unidad no cabe ni en la caja ${grande.nombre}.`);
+    return [ref, cant, vol];
+  }).sort((a,b)=>b[2]-a[2]);
+  const abiertas = [];
+  for (let [ref, cant, vol] of lineas){
+    for (const c of abiertas){
+      if (!cant) break;
+      const n = Math.min(Math.floor((cap - c.usado + EPS)/vol), cant);
+      if (n){ c.contenido[ref] = (c.contenido[ref]||0)+n; c.usado += n*vol; cant -= n; }
+    }
+    const porCaja = Math.floor((cap+EPS)/vol);
+    while (cant){ const n = Math.min(porCaja, cant); abiertas.push({contenido:{[ref]:n}, usado:n*vol}); cant -= n; }
+  }
+  return abiertas.map(c => {
+    const t = tipos.find(t => c.usado <= t.vol*aprov + EPS);
+    return {caja:t.nombre, medidas:t.medidas, capacidad:t.vol, usado:c.usado, contenido:c.contenido};
+  });
+}
+
+function pintarTablas(){
+  document.getElementById("tCajas").innerHTML =
+    "<tr><th>Caja</th><th>Medidas (cm)</th><th>Volumen (cm³)</th></tr>" +
+    [...CAJAS].sort((a,b)=>a.vol-b.vol).map(c=>`<tr><td>${esc(c.nombre)}</td><td class="n">${c.medidas}</td><td class="n">${fmt(c.vol)}</td></tr>`).join("");
+  document.getElementById("tArt").innerHTML =
+    "<tr><th>Ref.</th><th>Descripción</th><th>Caja art. (cm)</th><th>Uds</th><th>cm³/ud</th></tr>" +
+    Object.values(ARTS).map(a=>`<tr><td>${esc(a.ref)}</td><td>${esc(a.desc)}</td><td class="n">${a.medidas}</td><td class="n">${a.uds}</td><td class="n">${fmt(a.vol_ud)}</td></tr>`).join("");
+  document.querySelectorAll(".line select").forEach(rellenarSelect);
+}
+
+function esc(s){ return String(s).replace(/[&<>"]/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+
+let lineId = 0;
+function rellenarSelect(sel){
+  const v = sel.value;
+  sel.innerHTML = '<option value="">— Referencia —</option>' +
+    Object.values(ARTS).map(a=>`<option value="${esc(a.ref)}">${esc(a.ref)} · ${esc(a.desc)}</option>`).join("");
+  if (ARTS[v]) sel.value = v;
+}
+function addLine(ref="", cant=""){
+  const id = ++lineId, d = document.createElement("div");
+  d.className = "line";
+  d.innerHTML = `<select id="ref${id}" aria-label="Referencia"></select>
+    <input id="cant${id}" type="number" min="1" placeholder="Uds" aria-label="Cantidad" value="${cant}">
+    <button aria-label="Quitar línea">✕</button>`;
+  const sel = d.querySelector("select"); rellenarSelect(sel); sel.value = ref;
+  d.querySelector("button").onclick = () => d.remove();
+  document.getElementById("lines").appendChild(d);
+}
+
+function calcular(){
+  const out = document.getElementById("out");
+  const pedido = [...document.querySelectorAll(".line")].map(l => [l.querySelector("select").value, parseInt(l.querySelector("input").value,10)])
+    .filter(([r,c]) => r && c > 0);
+  if (!pedido.length){ out.innerHTML = '<p class="note">Añade al menos una línea con referencia y cantidad.</p>'; return; }
+  const aprov = Math.min(100, Math.max(50, num(document.getElementById("aprov").value) || 90))/100;
+  try {
+    const res = empaquetar(pedido, aprov);
+    const resumen = {};
+    res.forEach(c => resumen[c.caja] = (resumen[c.caja]||0)+1);
+    out.innerHTML = `<div class="total"><b>${res.length}</b><span>caja${res.length>1?"s":""}</span>
+      ${Object.entries(resumen).map(([k,n])=>`<span class="chip">${n} × ${esc(k)}</span>`).join("")}</div>
+      <div class="boxes">${res.map((c,i)=>{
+        const p = 100*c.usado/c.capacidad;
+        return `<article class="box"><header><strong>Caja ${i+1} · ${esc(c.caja)}</strong><span class="dim">${c.medidas}</span></header>
+          <div class="bar" title="Ocupación"><i style="width:${p.toFixed(1)}%"></i></div>
+          <span class="dim">Ocupación ${p.toFixed(0)}%</span>
+          <ul>${Object.entries(c.contenido).map(([r,u])=>`<li><span>${u}</span><span>${esc(r)} · ${esc(ARTS[r].desc)}</span></li>`).join("")}</ul></article>`;
+      }).join("")}</div>`;
+  } catch(e){ out.innerHTML = `<p class="err">${esc(e.message)}</p>`; }
+}
+
+document.getElementById("xls").addEventListener("change", async ev => {
+  const f = ev.target.files[0]; if (!f) return;
+  const origen = document.getElementById("origen");
+  try {
+    const wb = XLSX.read(await f.arrayBuffer(), {type:"array"});
+    const {arts, cajas} = leerLibro(wb);
+    cargarFilas(arts, cajas); pintarTablas();
+    document.getElementById("lines").innerHTML = ""; addLine();
+    document.getElementById("out").innerHTML = '<p class="note">Excel cargado. Escribe el pedido y pulsa Calcular cajas.</p>';
+    origen.textContent = `${f.name}: ${arts.length} artículos, ${cajas.length} cajas`;
+    origen.className = "note";
+  } catch(e){ origen.textContent = e.message; origen.className = "err"; }
+});
+document.getElementById("add").onclick = () => addLine();
+document.getElementById("calc").onclick = calcular;
+
+cargarFilas(EJEMPLO.arts, EJEMPLO.cajas);
+pintarTablas();
+EJEMPLO.pedido.forEach(([r,c]) => addLine(r,c));
+calcular();
+</script>

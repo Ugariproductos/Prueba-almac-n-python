@@ -3,6 +3,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
 <style>
 /* Layout: muelle de expedición — barra de carga arriba, albarán a la izquierda, bultos como etiquetas de envío */
@@ -84,7 +85,9 @@ tr.bad td{background:var(--warn-bg)}
 .label .dims strong{font-size:1.5rem;font-weight:800;font-variant-numeric:tabular-nums;line-height:1.1}
 .label .dims em{font-style:normal;font-family:var(--mono);font-size:.8rem;color:var(--muted)}
 .label ul{list-style:none;margin:0;padding:8px 12px 12px;display:flex;flex-direction:column;gap:5px}
-.label li{display:grid;grid-template-columns:12px 46px minmax(0,1fr);gap:8px;align-items:baseline}
+.label .orden{margin:8px 12px 0;font-size:.72rem;text-transform:uppercase;letter-spacing:.07em;color:var(--muted)}
+.mk{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;color:#fff;font-size:.75rem;font-weight:800}
+.label li{display:grid;grid-template-columns:20px 46px minmax(0,1fr);gap:8px;align-items:baseline}
 .label li .q{font-family:var(--mono);font-weight:600;text-align:right;font-variant-numeric:tabular-nums}
 .label li .r{font-family:var(--mono);font-weight:600}
 .label li .d{display:block;font-size:.8rem;color:var(--muted);overflow-wrap:anywhere}
@@ -126,9 +129,9 @@ details .tbl{max-height:280px;overflow-y:auto;margin-top:10px}
   <section>
     <h2>2 · Datos del albarán</h2>
     <div class="doc">
-      <div class="field"><label for="fAlb">Nº albarán</label><input id="fAlb"></div>
-      <div class="field"><label for="fPed">Nº pedido proveedor</label><input id="fPed"></div>
-      <div class="field"><label for="fProv">Proveedor</label><input id="fProv"></div>
+      <div class="field"><label for="fAlb">Nº albarán Ugari</label><input id="fAlb"></div>
+      <div class="field"><label for="fPed">Nº pedido cliente</label><input id="fPed"></div>
+      <div class="field"><label for="fProv">Cliente</label><input id="fProv" value="El Corte Inglés"></div>
       <div class="field"><label for="fFecha">Fecha</label><input id="fFecha"></div>
     </div>
     <div class="tbl"><table id="tLineas"></table></div>
@@ -158,7 +161,7 @@ details .tbl{max-height:280px;overflow-y:auto;margin-top:10px}
 <script>
 const EPS = 1e-9;
 const COLORES = ["#c0692b","#3f7cac","#5c9a4a","#a8508f","#c9a227","#2f9c95","#8c5a3c","#6c63b5","#d0574f","#4b8b3b"];
-let ARTS = {}, CAJAS = [], LINEAS = [], DOC_IMGS = [], DOC_TEXTO = "";
+let ULTIMO = null, ARTS = {}, CAJAS = [], LINEAS = [], DOC_IMGS = [], DOC_TEXTO = "";
 
 const EJEMPLO = {
   arts: [["EJ-001","EJEMPLO Pañal adulto talla M (paquete)",60,40,40,4],
@@ -166,7 +169,7 @@ const EJEMPLO = {
          ["EJ-003","EJEMPLO Crema barrera 200 ml",30,20,15,24],
          ["EJ-004","EJEMPLO Guantes nitrilo (caja 100)",50,25,25,10]],
   cajas: [["EJ Pequeña",30,20,20],["EJ Mediana",40,30,30],["EJ Grande",60,40,40]],
-  doc: {albaran:"EJEMPLO-0001", pedido:"EJ-PED-77", proveedor:"Proveedor de ejemplo", fecha:""},
+  doc: {albaran:"EJEMPLO-0001", pedido:"EJ-PED-77", proveedor:"El Corte Inglés", fecha:""},
   lineas: [["EJ-001","",6],["EJ-002","",5],["EJ-003","",30],["EJ-004","",3]]
 };
 
@@ -297,6 +300,7 @@ function cajaSVG(caja){
     <rect x="${x0}" y="${y0}" width="${w}" height="${h}" fill="var(--kraft-soft)"/>
     <polygon points="${x0+w},${y0} ${x0+w+d},${y0-d*0.6} ${x0+w+d},${y0+h-d*0.6} ${x0+w},${y0+h}" fill="var(--kraft-soft)"/>
     ${rel}
+    ${capas.map((c,j)=> c.f*h >= 9 ? `<text x="${x0+w/2}" y="${(fy(c.y+c.f/2)+4).toFixed(1)}" text-anchor="middle" font-size="11" font-weight="800" font-family="Archivo, sans-serif" fill="#fff">${j+1}</text>` : "").join("")}
     <rect x="${x0}" y="${y0}" width="${w}" height="${h}" fill="none" stroke="var(--kraft-dark)" stroke-width="1.5"/>
     <polygon points="${x0+w},${y0} ${x0+w+d},${y0-d*0.6} ${x0+w+d},${y0+h-d*0.6} ${x0+w},${y0+h}" fill="none" stroke="var(--kraft-dark)" stroke-width="1.5"/>
     <text x="${x0+w/2}" y="${y0+h+14}" text-anchor="middle" font-size="11" font-family="IBM Plex Mono, monospace" fill="var(--muted)">${Math.round(acum*100)}% lleno</text>
@@ -314,25 +318,28 @@ function calcular(){
   }
   if (!pedido.length){ out.innerHTML = '<p class="note">No hay líneas con referencia del maestro y cantidad.</p>'; return; }
   const aprov = Math.min(100, Math.max(50, num($("aprov").value) || 90))/100;
-  const alb = $("fAlb").value.trim() || "—", ped = $("fPed").value.trim() || "—";
+  const alb = $("fAlb").value.trim() || "—", ped = $("fPed").value.trim() || "—", cli = $("fProv").value.trim() || "Cliente";
   try {
     const res = empaquetar(pedido, aprov);
     const resumen = {};
     res.forEach(c => resumen[c.tipo.nombre] = (resumen[c.tipo.nombre]||0)+1);
     const total = res.length;
+    ULTIMO = {res, alb, ped, cli};
     out.innerHTML = `
       <div class="summary">
         <div class="big"><b>${total}</b><span>bulto${total>1?"s":""}</span></div>
         ${Object.entries(resumen).map(([k,n])=>`<span class="chip">${n} × ${esc(k)}</span>`).join("")}
-        <span class="note">Albarán ${esc(alb)} · Pedido ${esc(ped)}</span>
+        <span class="note">Albarán Ugari ${esc(alb)} · Pedido ${esc(cli)} ${esc(ped)}</span>
+        <button id="pdfBtn">Descargar hoja para almacén (PDF)</button>
+        <span id="pdfEstado" class="note"></span>
       </div>
       ${fuera.length ? `<p class="err">No incluidas (no están en el maestro): ${fuera.map(esc).join(", ")}</p>` : ""}
       <div class="labels">${res.map((c,i)=>`
         <article class="label">
           <div class="head"><b>BULTO ${i+1} / ${total}</b><span>${esc(c.tipo.nombre)}</span></div>
           <div class="refs">
-            <div><small>Nº albarán</small><strong>${esc(alb)}</strong></div>
-            <div><small>Pedido proveedor</small><strong>${esc(ped)}</strong></div>
+            <div><small>Pedido ${esc(cli)}</small><strong>${esc(ped)}</strong></div>
+            <div><small>Albarán Ugari</small><strong>${esc(alb)}</strong></div>
           </div>
           <div class="boxrow">
             ${cajaSVG(c)}
@@ -340,15 +347,155 @@ function calcular(){
               <strong>${c.tipo.l} × ${c.tipo.a} × ${c.tipo.h}</strong>
               <em>${Object.values(c.contenido).reduce((s,u)=>s+u,0)} uds · ${Object.keys(c.contenido).length} ref.</em></div>
           </div>
-          <ul>${Object.entries(c.contenido).map(([r,u])=>`
-            <li><span class="dot" style="background:${colorDe(r)}"></span><span class="q">${u}</span>
+          <p class="orden">Colocar de abajo arriba:</p>
+          <ul>${Object.entries(c.contenido).map(([r,u],j)=>`
+            <li><span class="mk" style="background:${colorDe(r)}">${j+1}</span><span class="q">${u}</span>
               <span><span class="r">${esc(r)}</span><span class="d">${esc(ARTS[r].desc)}</span></span></li>`).join("")}
           </ul>
         </article>`).join("")}
       </div>`;
-  } catch(e){ out.innerHTML = `<p class="err">${esc(e.message)}</p>`; }
+    $("pdfBtn").onclick = descargarPDF;
+  } catch(e){ ULTIMO = null; out.innerHTML = `<p class="err">${esc(e.message)}</p>`; }
 }
 $("calc").onclick = calcular;
+
+/* ---------- hoja de almacén en PDF ---------- */
+const rgb = hex => [1,3,5].map(i => parseInt(hex.slice(i,i+2),16));
+let downloadsPromise = window.claude?.use ? window.claude.use("downloads") : Promise.resolve(null);
+
+function dibujarCaja(doc, c, x, y, w, h, d){
+  // x,y = esquina superior izquierda de la cara frontal; d = profundidad en diagonal
+  const dy = d*0.6, capas = []; let acum = 0;
+  Object.entries(c.contenido).forEach(([ref,u],j) => { const f = u*ARTS[ref].vol_ud/c.tipo.vol; capas.push({ref,j,y:acum,f}); acum += f; });
+  const fy = v => y + h - v*h;
+  doc.setDrawColor(90,60,30); doc.setLineWidth(0.5);
+  doc.setFillColor(234,217,192);
+  doc.lines([[d,-dy],[w,0],[-d,dy]], x, y, [1,1], "FD", true);          // tapa
+  doc.rect(x, y, w, h, "F");
+  doc.lines([[d,-dy],[0,h],[-d,dy]], x+w, y, [1,1], "F", true);          // lateral
+  for (const k of capas){
+    const col = rgb(colorDe(k.ref)), yt = fy(k.y+k.f), hh = k.f*h;
+    doc.setFillColor(...col); doc.rect(x, yt, w, hh, "F");
+    doc.setFillColor(...col.map(v => Math.round(v*0.78)));
+    doc.lines([[d,-dy],[0,hh],[-d,dy]], x+w, yt, [1,1], "F", true);
+    doc.setDrawColor(255,255,255); doc.setLineWidth(0.3); doc.line(x, yt, x+w, yt);
+  }
+  doc.setDrawColor(90,60,30); doc.setLineWidth(0.6);
+  doc.rect(x, y, w, h, "S");
+  doc.lines([[d,-dy],[0,h],[-d,dy]], x+w, y, [1,1], "S", true);
+  doc.lines([[d,-dy],[w,0]], x, y, [1,1], "S", false);
+  // números de capa a la derecha, con línea a su capa
+  let ultimo = Infinity;
+  for (const k of capas){
+    const ym = fy(k.y+k.f/2);
+    let yl = Math.min(ym, ultimo - 9); ultimo = yl;
+    const xl = x+w+d+10;
+    doc.setDrawColor(60,60,60); doc.setLineWidth(0.3);
+    doc.line(x+w+d*0.5, ym - dy*0.5, xl-4, yl);
+    doc.setFillColor(...rgb(colorDe(k.ref))); doc.circle(xl, yl, 4, "F");
+    doc.setTextColor(255,255,255); doc.setFont("helvetica","bold"); doc.setFontSize(11);
+    doc.text(String(k.j+1), xl, yl+1.4, {align:"center"});
+    doc.setTextColor(20,20,20); doc.setFontSize(11);
+    doc.text(k.ref, xl+6, yl+1.4);
+  }
+  doc.setTextColor(110,110,110); doc.setFont("helvetica","normal"); doc.setFontSize(9);
+  doc.text(`${Math.round(acum*100)}% lleno`, x+w/2, y+h+6, {align:"center"});
+}
+
+function crearPDF({res, alb, ped, cli}){
+  const {jsPDF} = window.jspdf;
+  const doc = new jsPDF({unit:"mm", format:"a4"});
+  const M = 14, W = 210 - 2*M, N = res.length;
+  const datos = (y) => {
+    doc.setDrawColor(30,30,30); doc.setLineWidth(0.6);
+    doc.rect(M, y, W/2, 20); doc.rect(M+W/2, y, W/2, 20);
+    doc.setFont("helvetica","normal"); doc.setFontSize(9); doc.setTextColor(90,90,90);
+    doc.text(`PEDIDO ${cli.toUpperCase()}`, M+4, y+6); doc.text("ALBARÁN UGARI", M+W/2+4, y+6);
+    doc.setFont("helvetica","bold"); doc.setFontSize(20); doc.setTextColor(20,20,20);
+    doc.text(ped, M+4, y+16); doc.text(alb, M+W/2+4, y+16);
+  };
+
+  // portada: resumen de bultos
+  doc.setFont("helvetica","bold"); doc.setFontSize(24); doc.setTextColor(20,20,20);
+  doc.text("HOJA DE PREPARACIÓN", M, M+10);
+  datos(M+16);
+  doc.setFontSize(18); doc.text(`${N} BULTO${N>1?"S":""}`, M, M+50);
+  let y = M+60;
+  doc.setFontSize(9); doc.setTextColor(90,90,90);
+  ["BULTO","CAJA","MEDIDAS EXTERIORES (cm)","REFS.","UDS."].forEach((t,i)=>doc.text(t, M+[0,22,70,140,162][i], y));
+  doc.setDrawColor(30,30,30); doc.line(M, y+2, M+W, y+2); y += 10;
+  res.forEach((c,i) => {
+    if (y > 280){ doc.addPage(); y = M+10; }
+    doc.setFont("helvetica","bold"); doc.setFontSize(13); doc.setTextColor(20,20,20);
+    doc.text(`${i+1} / ${N}`, M, y); doc.setFont("helvetica","normal");
+    doc.text(c.tipo.nombre, M+22, y);
+    doc.text(`${c.tipo.l} × ${c.tipo.a} × ${c.tipo.h}`, M+70, y);
+    doc.text(String(Object.keys(c.contenido).length), M+140, y);
+    doc.text(String(Object.values(c.contenido).reduce((s,u)=>s+u,0)), M+162, y);
+    doc.setDrawColor(200,200,200); doc.line(M, y+3, M+W, y+3); y += 10;
+  });
+
+  // una página por bulto
+  res.forEach((c,i) => {
+    doc.addPage();
+    doc.setFillColor(20,20,20); doc.rect(M, M, W, 18, "F");
+    doc.setTextColor(255,255,255); doc.setFont("helvetica","bold"); doc.setFontSize(26);
+    doc.text(`BULTO ${i+1} / ${N}`, M+5, M+12.5);
+    doc.setFontSize(13); doc.text(c.tipo.nombre, M+W-5, M+11.5, {align:"right"});
+    datos(M+22);
+    doc.setFont("helvetica","normal"); doc.setFontSize(9); doc.setTextColor(90,90,90);
+    doc.text("CAJA EXTERIOR (cm)", M, M+52);
+    doc.setFont("helvetica","bold"); doc.setFontSize(28); doc.setTextColor(20,20,20);
+    doc.text(`${c.tipo.l} × ${c.tipo.a} × ${c.tipo.h}`, M, M+64);
+    const uds = Object.values(c.contenido).reduce((s,u)=>s+u,0);
+    doc.setFont("helvetica","normal"); doc.setFontSize(12);
+    doc.text(`${uds} unidades · ${Object.keys(c.contenido).length} referencias`, M, M+71);
+
+    dibujarCaja(doc, c, M+10, M+100, 80, 60, 32);
+
+    let y = M+178;
+    doc.setFont("helvetica","bold"); doc.setFontSize(11); doc.setTextColor(20,20,20);
+    doc.text("COLOCAR EN ESTE ORDEN, DE ABAJO ARRIBA (1 = fondo de la caja)", M, y); y += 4;
+    const cab = () => {
+      doc.setFillColor(235,235,235); doc.rect(M, y, W, 8, "F");
+      doc.setFont("helvetica","bold"); doc.setFontSize(9); doc.setTextColor(60,60,60);
+      doc.text("Nº", M+3, y+5.5); doc.text("UDS.", M+14, y+5.5); doc.text("REFERENCIA", M+34, y+5.5);
+      doc.text("DESCRIPCIÓN", M+80, y+5.5); doc.text("OK", M+W-8, y+5.5);
+      y += 8;
+    };
+    cab();
+    Object.entries(c.contenido).forEach(([r,u],j) => {
+      if (y > 268){ doc.addPage(); y = M; doc.setFont("helvetica","bold"); doc.setFontSize(12); doc.setTextColor(20,20,20);
+        doc.text(`BULTO ${i+1} / ${N} (continuación) · Pedido ${ped} · Albarán ${alb}`, M, y+6); y += 10; cab(); }
+      doc.setFillColor(...rgb(colorDe(r))); doc.circle(M+5, y+6, 3.6, "F");
+      doc.setTextColor(255,255,255); doc.setFont("helvetica","bold"); doc.setFontSize(11);
+      doc.text(String(j+1), M+5, y+7.3, {align:"center"});
+      doc.setTextColor(20,20,20); doc.setFontSize(16);
+      doc.text(String(u), M+28, y+7.8, {align:"right"});
+      doc.setFontSize(13); doc.text(r, M+34, y+7.5);
+      doc.setFont("helvetica","normal"); doc.setFontSize(9.5);
+      doc.text(doc.splitTextToSize(ARTS[r].desc, W-80-14).slice(0,2), M+80, y+5.5);
+      doc.setDrawColor(30,30,30); doc.setLineWidth(0.4); doc.rect(M+W-9, y+2.5, 6, 6);
+      doc.setDrawColor(200,200,200); doc.line(M, y+12, M+W, y+12);
+      y += 12;
+    });
+    doc.setFont("helvetica","normal"); doc.setFontSize(10); doc.setTextColor(60,60,60);
+    doc.text("Preparado por: ______________________     Fecha: ____________     Revisado: ______________", M, 287);
+  });
+  return doc;
+}
+
+async function descargarPDF(){
+  const est = $("pdfEstado");
+  if (!ULTIMO) return;
+  if (!window.jspdf){ est.innerHTML = '<span class="err">No se ha cargado el generador de PDF. Recarga la página.</span>'; return; }
+  const doc = crearPDF(ULTIMO);
+  const nombre = `Preparacion_${(ULTIMO.alb||"albaran").replace(/[^\w\-]+/g,"_")}.pdf`;
+  const dl = await downloadsPromise;
+  if (!dl){ est.innerHTML = '<span class="err">Este visor no permite descargar archivos.</span>'; return; }
+  try { await dl.save({filename: nombre, data: doc.output("blob")}); est.innerHTML = '<span class="ok">PDF listo para imprimir.</span>'; }
+  catch(e){ est.innerHTML = e?.code === "cancelled" || e?.code === "declined" ? "" : `<span class="err">No se pudo descargar el PDF.</span>`; }
+}
 
 /* ---------- lectura del albarán ---------- */
 let samplePromise = window.claude?.use ? window.claude.use("sample") : Promise.resolve(null);
@@ -411,11 +558,11 @@ async function procesarDocumento(file){
     if (!imgs.length && !texto){ est.innerHTML = '<span class="err">Este visor no puede enviar imágenes a Claude. Prueba con un PDF que tenga texto.</span>'; return; }
 
     const refs = Object.values(ARTS).slice(0, 400).map(a => `${a.ref} | ${a.desc}`).join("\n");
-    const prompt = `Eres un operario de almacén. Te paso un albarán de entrega de un proveedor${imgs.length?" (imágenes; las páginas altas van partidas en dos trozos con un poco de solape, no dupliques líneas)":""}${texto?" y el texto extraído del PDF":""}.
+    const prompt = `Eres un operario de almacén. Te paso un albarán de entrega emitido por Ugari (nuestra empresa) a un cliente, normalmente El Corte Inglés${imgs.length?" (imágenes; las páginas altas van partidas en dos trozos con un poco de solape, no dupliques líneas)":""}${texto?" y el texto extraído del PDF":""}.
 Extrae:
-- numero_albaran: el número del albarán / nota de entrega.
-- pedido_proveedor: el número de pedido que aparece en el albarán (nº pedido, su pedido, n/pedido, order no.).
-- proveedor: nombre de la empresa que emite el albarán.
+- numero_albaran: el número del albarán de Ugari.
+- pedido_proveedor: el número de pedido del CLIENTE (El Corte Inglés) que aparece en el albarán (su pedido, nº pedido cliente, pedido ECI, order no.). No uses el número del albarán.
+- proveedor: nombre del cliente al que va el albarán.
 - fecha: fecha del albarán tal como aparece.
 - lineas: cada artículo con referencia (código del artículo), descripcion y cantidad en UNIDADES (número). Si la cantidad viene en cajas y el albarán indica unidades por caja, multiplica.
 Si una referencia del albarán coincide con una de nuestro maestro (lista abajo, "ref | descripción"), usa exactamente la referencia del maestro.
@@ -430,7 +577,7 @@ ${texto ? "\nTexto del PDF:\n" + texto.slice(0, 30000) : ""}`;
     const r = await sample.json(prompt, imgs.length ? {images: imgs} : {});
     $("fAlb").value = r.numero_albaran || "";
     $("fPed").value = r.pedido_proveedor || "";
-    $("fProv").value = r.proveedor || "";
+    $("fProv").value = r.proveedor || "El Corte Inglés";
     $("fFecha").value = r.fecha || "";
     LINEAS = (Array.isArray(r.lineas) ? r.lineas : []).map(l => ({ref:String(l.ref||"").trim(), desc:String(l.descripcion||""), cant:parseInt(l.cantidad,10)||0}));
     pintarLineas();

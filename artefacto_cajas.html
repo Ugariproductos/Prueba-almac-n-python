@@ -104,12 +104,6 @@ td.extra{font-size:.78rem;color:var(--muted);white-space:normal;min-width:140px}
 .label ul{list-style:none;margin:0;padding:8px 12px 12px;display:flex;flex-direction:column;gap:5px}
 .label .orden{margin:8px 12px 0;font-size:.72rem;text-transform:uppercase;letter-spacing:.07em;color:var(--muted)}
 .mk{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;color:#fff;font-size:.75rem;font-weight:800}
-.pasos{display:flex;flex-direction:column;gap:12px;padding:6px 12px 14px}
-.paso{display:grid;grid-template-columns:22px 110px minmax(0,1fr);gap:10px;align-items:start}
-.paso svg{width:110px;height:auto;display:block}
-.paso .pn{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:var(--fg);color:var(--bg);font-weight:800;font-size:.8rem}
-.paso b{display:block;font-size:.88rem}
-.paso span:not(.pn){display:block;font-size:.84rem}
 .label li{display:grid;grid-template-columns:20px 46px minmax(0,1fr);gap:8px;align-items:baseline}
 .label li .q{font-family:var(--mono);font-weight:600;text-align:right;font-variant-numeric:tabular-nums}
 .label li .r{font-family:var(--mono);font-weight:600}
@@ -389,49 +383,6 @@ function colocacion(c, ref){
 }
 
 
-/* ---------- colocación paso a paso (vista desde arriba) ---------- */
-function pasos(c){
-  const orden = Object.keys(c.contenido), out = [];
-  for (const k of c.capas){
-    const llenos = Math.floor(k.k/k.per), resto = k.k % k.per, n = orden.indexOf(k.ref)+1;
-    if (llenos) out.push({ref:k.ref, n, uds:llenos*k.per, alturas:llenos, nx:k.nx, ny:k.ny, cuantos:k.per, o:k.o, z:k.z});
-    if (resto) out.push({ref:k.ref, n, uds:resto, alturas:1, nx:k.nx, ny:k.ny, cuantos:resto, o:k.o, z:k.z + llenos*k.o[2], parcial:true});
-  }
-  return out;
-}
-function textoPaso(p){
-  const [ox,oy,oz] = p.o;
-  return {
-    donde: p.z < EPS ? "En el fondo de la caja" : `Encima, a ${cm(p.z)} cm del fondo`,
-    que: p.parcial
-      ? `${p.uds} uds de ${p.ref}, empezando por la esquina delantera izquierda y fila a fila`
-      : `${p.uds} uds de ${p.ref}: ${p.alturas} altura${p.alturas>1?"s":""} de ${p.nx} × ${p.ny} (${p.nx} a lo largo, ${p.ny} a lo ancho)`,
-    orient: `Cada unidad: ${cm(ox)} cm a lo largo · ${cm(oy)} cm a lo ancho · ${cm(oz)} cm de alto`
-  };
-}
-function celdasPaso(c, p){   // rectángulos en planta: x a lo largo, y desde el frente
-  const [ox,oy] = p.o, out = [];
-  for (let i = 0; i < p.cuantos; i++){ const ix = i % p.nx, iy = Math.floor(i/p.nx); out.push({x:ix*ox, y:iy*oy, w:ox, h:oy}); }
-  return out;
-}
-function planoSVG(c, p){
-  const T = c.tipo, pad = 1.5, fs = Math.max(2.2, Math.min(p.o[0], p.o[1])*0.45, 0), fsF = Math.max(3, T.l*0.065);
-  const col = colorDe(p.ref);
-  return `<svg viewBox="${-pad} ${-pad} ${T.l+2*pad} ${T.a+2*pad+fsF+1}" role="img" aria-label="Vista desde arriba del paso">
-    <rect x="0" y="0" width="${T.l}" height="${T.a}" fill="var(--kraft-soft)" stroke="var(--kraft-dark)" stroke-width=".8"/>
-    ${celdasPaso(c,p).map(r => `<rect x="${r.x.toFixed(2)}" y="${(T.a-r.y-r.h).toFixed(2)}" width="${r.w.toFixed(2)}" height="${r.h.toFixed(2)}" fill="${col}" stroke="#fff" stroke-width=".4"/>
-      <text x="${(r.x+r.w/2).toFixed(2)}" y="${(T.a-r.y-r.h/2+Math.min(fs,6)*0.35).toFixed(2)}" font-size="${Math.min(fs,6).toFixed(2)}" text-anchor="middle" font-weight="800" font-family="Archivo, sans-serif" fill="#fff">${p.n}</text>`).join("")}
-    <text x="${T.l/2}" y="${T.a+fsF+0.6}" font-size="${fsF.toFixed(2)}" text-anchor="middle" font-weight="700" font-family="Archivo, sans-serif" fill="var(--muted)">▼ FRENTE</text>
-  </svg>`;
-}
-function pasosHTML(c){
-  return `<p class="orden">Colocación paso a paso · vista desde arriba, el frente abajo</p>
-    <div class="pasos">${pasos(c).map((p,i) => { const t = textoPaso(p); return `
-      <div class="paso"><span class="pn">${i+1}</span>${planoSVG(c,p)}
-        <div><b>${esc(t.donde)}</b><span>${esc(t.que)}</span><span class="note">${esc(t.orient)}</span></div></div>`; }).join("")}
-    </div>`;
-}
-
 /* ---------- dibujo a escala (cm), común para SVG y PDF ---------- */
 const PROY = (x,y,z) => [x + y*0.45, -(z + y*0.28)];
 function marco(){   // tamaño del dibujo de la caja más grande: misma escala para todas
@@ -609,7 +560,6 @@ function pintarResultado(r){
             <li><span class="mk" style="background:${colorDe(r)}">${j+1}</span><span class="q">${u}</span>
               <span><span class="r">${esc(r)}</span><span class="d">${esc(descDe(r))}</span><span class="d pl">${colocacion(c, r)}</span></span></li>`).join("")}
           </ul>
-          ${pasosHTML(c)}
         </article>`).join("")}
       </div>`;
   $("pdfBtn").onclick = descargarPDF;
@@ -622,9 +572,9 @@ $("calc").onclick = calcular;
 const rgb = hex => [1,3,5].map(i => parseInt(hex.slice(i,i+2),16));
 let downloadsPromise = window.claude?.use ? window.claude.use("downloads") : Promise.resolve(null);
 
-function dibujarCaja(doc, c, x0, yBase, ancho, alto){
+function dibujarCaja(doc, c, x0, yBase, ancho, alto, pie = true, m = marco()){
   // dibuja la escena con la misma escala para todas las cajas; (x0, yBase) = esquina inferior izquierda del área
-  const m = marco(), s = Math.min(ancho/m.w, alto/m.h), e = escena(c);
+  const s = Math.min(ancho/m.w, alto/m.h), e = escena(c);
   const poly = (pts, style) => {
     const a = pts.map(([X,Y]) => [x0 + X*s, yBase + Y*s]);
     doc.lines(a.slice(1).map((p,i) => [p[0]-a[i][0], p[1]-a[i][1]]), a[0][0], a[0][1], [1,1], style, style !== "S");
@@ -634,13 +584,14 @@ function dibujarCaja(doc, c, x0, yBase, ancho, alto){
   doc.setDrawColor(60,60,60); doc.setLineWidth(0.15);
   for (const b of e.bloques){
     doc.setFillColor(...rgb(b.fill)); poly(b.pts, "FD");
-    if (b.label && b.label.size*s >= 3.2){
-      doc.setTextColor(255,255,255); doc.setFont("helvetica","bold"); doc.setFontSize(Math.min(b.label.size*s*2.2, 14));
+    if (b.label && b.label.size*s >= 2.4){
+      doc.setTextColor(255,255,255); doc.setFont("helvetica","bold"); doc.setFontSize(Math.max(5, Math.min(b.label.size*s*2.2, 14)));
       doc.text(String(b.label.n), x0 + b.label.at[0]*s, yBase + b.label.at[1]*s + b.label.size*s*0.3, {align:"center"});
     }
   }
   doc.setDrawColor(90,60,30); doc.setLineWidth(0.6);
   e.aristas.forEach(a => poly(a, "S"));
+  if (!pie) return;
   doc.setTextColor(110,110,110); doc.setFont("helvetica","normal"); doc.setFontSize(9);
   doc.text(`Caja ${c.tipo.nombre} dibujada a escala · ${Math.round(100*c.usado/c.tipo.vol)}% lleno`, x0, yBase + 6);
 }
@@ -651,141 +602,67 @@ function crearPDF(lista){
   lista.forEach((r, i) => { if (i) doc.addPage(); paginasAlbaran(doc, r); });
   return doc;
 }
-function planoPDF(doc, c, p, x, y, ancho){
-  const T = c.tipo, s = ancho / T.l;
-  doc.setFillColor(240,228,210); doc.setDrawColor(120,90,50); doc.setLineWidth(0.4);
-  doc.rect(x, y, T.l*s, T.a*s, "FD");
-  doc.setFillColor(...rgb(colorDe(p.ref))); doc.setDrawColor(255,255,255); doc.setLineWidth(0.3);
-  const fs = Math.min(p.o[0], p.o[1])*s;
-  for (const r of celdasPaso(c,p)){
-    doc.setFillColor(...rgb(colorDe(p.ref)));
-    doc.rect(x + r.x*s, y + (T.a - r.y - r.h)*s, r.w*s, r.h*s, "FD");
-    if (fs >= 3){ doc.setTextColor(255,255,255); doc.setFont("helvetica","bold"); doc.setFontSize(Math.min(fs*1.6, 12));
-      doc.text(String(p.n), x + (r.x + r.w/2)*s, y + (T.a - r.y - r.h/2)*s + Math.min(fs*1.6,12)*0.13, {align:"center"}); }
-  }
-  doc.setTextColor(110,110,110); doc.setFont("helvetica","bold"); doc.setFontSize(8);
-  doc.text("FRENTE", x + T.l*s/2, y + T.a*s + 4, {align:"center"});
-  return T.a*s + 6;
-}
+/* Una sola hoja A4 por albarán: cabecera y una celda por bulto con su dibujo 3D y su contenido */
 function paginasAlbaran(doc, {res, alb, ped, cli, fecha}){
-  const M = 14, W = 210 - 2*M, N = res.length;
-  const datos = (y) => {
-    doc.setDrawColor(30,30,30); doc.setLineWidth(0.6);
-    doc.rect(M, y, W/2, 20); doc.rect(M+W/2, y, W/2, 20);
-    doc.setFont("helvetica","normal"); doc.setFontSize(9); doc.setTextColor(90,90,90);
-    doc.text(`PEDIDO ${cli.toUpperCase()}`, M+4, y+6); doc.text("ALBARÁN UGARI", M+W/2+4, y+6);
-    doc.setFont("helvetica","bold"); doc.setFontSize(20); doc.setTextColor(20,20,20);
-    doc.text(ped, M+4, y+16); doc.text(alb, M+W/2+4, y+16);
-  };
-
-  // portada: resumen de bultos
-  doc.setFont("helvetica","bold"); doc.setFontSize(24); doc.setTextColor(20,20,20);
-  doc.text("HOJA DE PREPARACIÓN", M, M+10);
-  datos(M+16);
-  doc.setFont("helvetica","normal"); doc.setFontSize(11); doc.setTextColor(60,60,60);
-  doc.text(`Fecha del albarán: ${fechaES(fecha)}`, M, M+42);
-  doc.setFont("helvetica","bold"); doc.setFontSize(18); doc.setTextColor(20,20,20);
-  doc.text(`${N} BULTO${N>1?"S":""}`, M, M+52);
-  let y = M+60;
-  doc.setFontSize(9); doc.setTextColor(90,90,90);
-  ["BULTO","CAJA","MEDIDAS EXTERIORES (cm)","REFS.","UDS."].forEach((t,i)=>doc.text(t, M+[0,22,70,140,162][i], y));
-  doc.setDrawColor(30,30,30); doc.line(M, y+2, M+W, y+2); y += 10;
-  res.forEach((c,i) => {
-    if (y > 280){ doc.addPage(); y = M+10; }
-    doc.setFont("helvetica","bold"); doc.setFontSize(13); doc.setTextColor(20,20,20);
-    doc.text(`${i+1} / ${N}`, M, y); doc.setFont("helvetica","normal");
-    doc.text(c.tipo.nombre, M+22, y);
-    doc.text(`${c.tipo.l} × ${c.tipo.a} × ${c.tipo.h}`, M+70, y);
-    doc.text(String(Object.keys(c.contenido).length), M+140, y);
-    doc.text(String(Object.values(c.contenido).reduce((s,u)=>s+u,0)), M+162, y);
-    doc.setDrawColor(200,200,200); doc.line(M, y+3, M+W, y+3); y += 10;
-  });
-
-  // una página por bulto
-  res.forEach((c,i) => {
-    doc.addPage();
-    doc.setFillColor(20,20,20); doc.rect(M, M, W, 18, "F");
-    doc.setTextColor(255,255,255); doc.setFont("helvetica","bold"); doc.setFontSize(26);
-    doc.text(`BULTO ${i+1} / ${N}`, M+5, M+12.5);
-    doc.setFontSize(13); doc.text(c.tipo.nombre, M+W-5, M+11.5, {align:"right"});
-    datos(M+22);
-    doc.setFont("helvetica","normal"); doc.setFontSize(9); doc.setTextColor(90,90,90);
-    doc.text("CAJA EXTERIOR (cm)", M, M+52);
-    doc.setFont("helvetica","bold"); doc.setFontSize(28); doc.setTextColor(20,20,20);
-    doc.text(`${c.tipo.l} × ${c.tipo.a} × ${c.tipo.h}`, M, M+64);
+  const M = 10, W = 210 - 2*M, N = res.length, gap = 3;
+  doc.setTextColor(20,20,20); doc.setFont("helvetica","bold"); doc.setFontSize(15);
+  doc.text("HOJA DE PREPARACIÓN", M, M+5);
+  doc.text(`${N} BULTO${N>1?"S":""}`, M+W, M+5, {align:"right"});
+  const celdas = [[`PEDIDO ${cli.toUpperCase()}`, ped, .4], ["ALBARÁN UGARI", alb, .4], ["FECHA ALBARÁN", fechaES(fecha), .2]];
+  let cx = M;
+  for (const [t, v, f] of celdas){
+    doc.setDrawColor(30,30,30); doc.setLineWidth(0.5); doc.rect(cx, M+8, W*f, 15);
+    doc.setFont("helvetica","normal"); doc.setFontSize(7.5); doc.setTextColor(90,90,90); doc.text(t, cx+3, M+12.5);
+    doc.setFont("helvetica","bold"); doc.setFontSize(f > .3 ? 16 : 12); doc.setTextColor(20,20,20); doc.text(String(v), cx+3, M+20.5);
+    cx += W*f;
+  }
+  const y0 = M+27, yFin = 282;
+  const cols = N <= 3 ? 1 : 2, filas = Math.ceil(N/cols);
+  const cw = (W - (cols-1)*gap)/cols, ch = (yFin - y0 - (filas-1)*gap)/filas;
+  const vertical = ch > 115;                        // celdas altas: dibujo arriba y lista debajo
+  const dw = vertical ? cw : cw*0.5;
+  const mL = Math.max(...res.map(c=>c.tipo.l)), mA = Math.max(...res.map(c=>c.tipo.a)), mH = Math.max(...res.map(c=>c.tipo.h));
+  const mAlb = {w: mL + mA*0.45, h: mH + mA*0.28};   // misma escala para todos los bultos de la hoja
+  const dh = vertical ? Math.min(ch*0.55, 130) : ch - 13;
+  res.forEach((c, i) => {
+    const x = M + (i % cols)*(cw + gap), y = y0 + Math.floor(i/cols)*(ch + gap), T = c.tipo;
+    doc.setDrawColor(20,20,20); doc.setLineWidth(0.5); doc.rect(x, y, cw, ch);
+    doc.setFillColor(20,20,20); doc.rect(x, y, cw, 7, "F");
+    doc.setTextColor(255,255,255); doc.setFont("helvetica","bold"); doc.setFontSize(10.5);
+    doc.text(`BULTO ${i+1} / ${N}`, x+2.5, y+5);
+    doc.setFontSize(9.5); doc.text(`Caja ${T.nombre} · ${T.l}×${T.a}×${T.h} cm`, x+cw-2.5, y+5, {align:"right"});
+    dibujarCaja(doc, c, x+3, y+7+2+dh-2, dw-6, dh-6, false, mAlb);
     const uds = Object.values(c.contenido).reduce((s,u)=>s+u,0);
-    doc.setFont("helvetica","normal"); doc.setFontSize(12);
-    doc.text(`${uds} unidades · ${Object.keys(c.contenido).length} referencias`, M, M+71);
-
-    dibujarCaja(doc, c, M+4, M+166, W-8, 88);
-
-    let y = M+180;
-    doc.setFont("helvetica","bold"); doc.setFontSize(11); doc.setTextColor(20,20,20);
-    doc.text("COLOCAR EN ESTE ORDEN, DE ABAJO ARRIBA (1 = fondo de la caja)", M, y); y += 4;
-    const cab = () => {
-      doc.setFillColor(235,235,235); doc.rect(M, y, W, 8, "F");
-      doc.setFont("helvetica","bold"); doc.setFontSize(9); doc.setTextColor(60,60,60);
-      doc.text("Nº", M+3, y+5.5); doc.text("UDS.", M+14, y+5.5); doc.text("REFERENCIA", M+34, y+5.5);
-      doc.text("DESCRIPCIÓN", M+80, y+5.5); doc.text("OK", M+W-8, y+5.5);
-      y += 8;
-    };
-    cab();
-    Object.entries(c.contenido).forEach(([r,u],j) => {
-      if (y > 268){ doc.addPage(); y = M; doc.setFont("helvetica","bold"); doc.setFontSize(12); doc.setTextColor(20,20,20);
-        doc.text(`BULTO ${i+1} / ${N} (continuación) · Pedido ${ped} · Albarán ${alb}`, M, y+6); y += 10; cab(); }
-      doc.setFillColor(...rgb(colorDe(r))); doc.circle(M+5, y+6, 3.6, "F");
-      doc.setTextColor(255,255,255); doc.setFont("helvetica","bold"); doc.setFontSize(11);
-      doc.text(String(j+1), M+5, y+7.3, {align:"center"});
-      doc.setTextColor(20,20,20); doc.setFontSize(16);
-      doc.text(String(u), M+28, y+7.8, {align:"right"});
-      doc.setFontSize(13); doc.text(r, M+34, y+7.5);
-      doc.setFont("helvetica","normal"); doc.setFontSize(9.5);
-      doc.text(doc.splitTextToSize(descDe(r), W-80-14).slice(0,1), M+80, y+5);
-      doc.setFont("helvetica","bold"); doc.text(doc.splitTextToSize(colocacion(c, r), W-80-14).slice(0,1), M+80, y+9.5);
-      doc.setDrawColor(30,30,30); doc.setLineWidth(0.4); doc.rect(M+W-9, y+2.5, 6, 6);
-      doc.setDrawColor(200,200,200); doc.line(M, y+12, M+W, y+12);
-      y += 12;
-    });
-    doc.setFont("helvetica","normal"); doc.setFontSize(10); doc.setTextColor(60,60,60);
-    doc.text("Preparado por: ______________________     Fecha: ____________     Revisado: ______________", M, 287);
-
-    // colocación paso a paso
-    const ps = pasos(c);
-    const cabPasos = (cont) => {
-      doc.addPage();
-      doc.setFillColor(20,20,20); doc.rect(M, M, W, 12, "F");
-      doc.setTextColor(255,255,255); doc.setFont("helvetica","bold"); doc.setFontSize(15);
-      doc.text(`BULTO ${i+1} / ${N} · ${c.tipo.nombre} ${c.tipo.l}×${c.tipo.a}×${c.tipo.h} cm`, M+4, M+8.3);
-      doc.setFontSize(10); doc.text(`Pedido ${ped} · Albarán ${alb}`, M+W-4, M+8, {align:"right"});
-      doc.setTextColor(20,20,20); doc.setFontSize(13);
-      doc.text(`COLOCACIÓN PASO A PASO${cont ? " (continuación)" : ""}`, M, M+22);
-      doc.setFont("helvetica","normal"); doc.setFontSize(9.5); doc.setTextColor(90,90,90);
-      doc.text("Vista desde arriba de cada capa. El lado marcado FRENTE es el frente de la caja. Empieza por el paso 1 (fondo).", M, M+28);
-      return M+36;
-    };
-    let yp = cabPasos(false);
-    ps.forEach((p, k) => {
-      const anchoPlano = 62, alto = c.tipo.a * anchoPlano / c.tipo.l + 6, fila = Math.max(alto, 30) + 6;
-      if (yp + fila > 285) yp = cabPasos(true);
-      doc.setFillColor(20,20,20); doc.circle(M+5, yp+5, 5, "F");
-      doc.setTextColor(255,255,255); doc.setFont("helvetica","bold"); doc.setFontSize(13);
-      doc.text(String(k+1), M+5, yp+6.6, {align:"center"});
-      planoPDF(doc, c, p, M+14, yp, anchoPlano);
-      const t = textoPaso(p), xt = M+14+anchoPlano+8, wt = W-(xt-M);
-      doc.setTextColor(20,20,20); doc.setFont("helvetica","bold"); doc.setFontSize(12);
-      doc.text(t.donde, xt, yp+5);
-      doc.setFillColor(...rgb(colorDe(p.ref))); doc.circle(xt+2.5, yp+11.2, 2.5, "F");
-      doc.setTextColor(255,255,255); doc.setFontSize(9); doc.text(String(p.n), xt+2.5, yp+12.4, {align:"center"});
-      doc.setTextColor(20,20,20); doc.setFont("helvetica","normal"); doc.setFontSize(11);
-      const lq = doc.splitTextToSize(t.que, wt-8); doc.text(lq, xt+7, yp+12.5);
-      doc.setFontSize(9.5); doc.setTextColor(80,80,80);
-      doc.text(doc.splitTextToSize(descDe(p.ref), wt), xt, yp+13 + lq.length*5);
-      doc.text(doc.splitTextToSize(t.orient, wt), xt, yp+18 + lq.length*5);
-      doc.setDrawColor(30,30,30); doc.setLineWidth(0.4); doc.rect(M+W-7, yp, 6, 6);
-      doc.setDrawColor(210,210,210); doc.line(M, yp+fila-3, M+W, yp+fila-3);
-      yp += fila;
+    doc.setTextColor(100,100,100); doc.setFont("helvetica","normal"); doc.setFontSize(7);
+    doc.text(`${uds} uds · ${Math.round(100*c.usado/T.vol)}% lleno · dibujo a escala`, x+3, y+7+dh+4);
+    // lista de contenido
+    const lx = vertical ? x+3 : x+dw, ly = vertical ? y+7+dh+8 : y+10, lw = vertical ? cw-6 : cw-dw-3;
+    const items = Object.entries(c.contenido), alto = (vertical ? y+ch-ly : ch-12);
+    const rowH = Math.max(4.2, Math.min(10, alto/Math.max(1, items.length)));
+    const fs = rowH >= 8 ? 9 : rowH >= 6 ? 7.5 : 6.3;
+    doc.setFont("helvetica","bold"); doc.setFontSize(6.5); doc.setTextColor(90,90,90);
+    doc.text("DE ABAJO ARRIBA", lx, ly-1);
+    items.forEach(([r,u], j) => {
+      const yy = ly + j*rowH, rad = Math.min(2.3, rowH*0.33), ym = yy + (rowH >= 7 ? rowH*0.32 : rowH*0.5);
+      if (yy + rowH > y + ch + 0.5) return;
+      doc.setFillColor(...rgb(colorDe(r))); doc.circle(lx+2.4, ym, rad, "F");
+      doc.setTextColor(255,255,255); doc.setFont("helvetica","bold"); doc.setFontSize(Math.max(5, rad*2.6));
+      doc.text(String(j+1), lx+2.4, ym+rad*0.42, {align:"center"});
+      doc.setTextColor(20,20,20); doc.setFontSize(fs+1); doc.text(String(u), lx+14, ym+1.2, {align:"right"});
+      doc.text(r, lx+16, ym+1.2);
+      const xr = lx + 16 + doc.getTextWidth(r) + 2;
+      doc.setFont("helvetica","normal"); doc.setFontSize(fs-0.5); doc.setTextColor(80,80,80);
+      doc.text(doc.splitTextToSize(descDe(r), Math.max(10, lx+lw-6-xr))[0] || "", xr, ym+1.2);
+      if (rowH >= 7){
+        doc.setFont("helvetica","bold"); doc.setFontSize(fs-1); doc.setTextColor(20,20,20);
+        doc.text(doc.splitTextToSize(colocacion(c, r), lw-22)[0] || "", lx+16, ym+1.2+fs*0.42);
+      }
+      doc.setDrawColor(30,30,30); doc.setLineWidth(0.3); doc.rect(lx+lw-4, ym-1.6, 3.2, 3.2);
+      doc.setDrawColor(215,215,215); doc.line(lx, yy+rowH, lx+lw, yy+rowH);
     });
   });
+  doc.setTextColor(60,60,60); doc.setFont("helvetica","normal"); doc.setFontSize(8.5);
+  doc.text("Preparado por: ______________________     Fecha: ____________     Revisado: ______________", M, 290);
 }
 
 async function descargarPDF(){

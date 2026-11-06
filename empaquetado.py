@@ -67,35 +67,57 @@ def dims_unidad(l, a, h, uds):
     return d
 
 
-def leer_excel(ruta=EXCEL):
-    """Devuelve (articulos, cajas). Detecta las hojas por sus cabeceras."""
+CAJAS_UGARI = [  # se usan si el Excel no trae hoja de cajas
+    {"nombre": "S", "l": 35, "a": 30, "h": 30, "vol": 35 * 30 * 30, "solo_si_no_cabe": False},
+    {"nombre": "M", "l": 40, "a": 30, "h": 30, "vol": 40 * 30 * 30, "solo_si_no_cabe": False},
+    {"nombre": "L", "l": 60, "a": 40, "h": 40, "vol": 60 * 40 * 40, "solo_si_no_cabe": False},
+    {"nombre": "XL", "l": 80, "a": 60, "h": 50, "vol": 80 * 60 * 50, "solo_si_no_cabe": True},
+]
+
+
+def leer_excel(ruta=EXCEL, cajas_por_defecto=None):
+    """Devuelve (articulos, cajas). Detecta las hojas y la fila de cabecera por su contenido.
+
+    Admite medidas en cm o en mm (si la cabecera dice "mm"), columna EAN opcional y
+    artículos sin medidas (quedan marcados con "sin_medidas" y no se pueden empaquetar).
+    Si no hay hoja de cajas se usan cajas_por_defecto (o las cajas S/M/L/XL de Ugari).
+    """
     wb = load_workbook(ruta, data_only=True, read_only=True)
     articulos, cajas = {}, []
     for hoja in wb.worksheets:
-        filas = list(hoja.iter_rows(values_only=True))
-        if not filas:
+        todas = list(hoja.iter_rows(values_only=True))
+        ic = next((i for i, f in enumerate(todas[:15])
+                   if None not in (_col(f, "largo"), _col(f, "ancho"), _col(f, "alto"))), None)
+        if ic is None:
             continue
-        cab = filas[0]
+        cab, filas = todas[ic], todas[ic:]
         i_l, i_a, i_h = _col(cab, "largo"), _col(cab, "ancho"), _col(cab, "alto")
-        if None in (i_l, i_a, i_h):
-            continue
+
+        def med(f, i):
+            v = _num(f[i]) if i is not None and i < len(f) else None
+            return None if v is None else v * (0.1 if re.search(r"\bmm\b", str(cab[i]).lower()) else 1)
+
         i_ref = _col(cab, "ref", "código", "codigo")
         if i_ref is not None:  # hoja de artículos
             i_desc = _col(cab, "desc", "nombre")
             i_uds = _col(cab, "uds", "unidades", "cantidad")
+            i_ean = _col(cab, "ean")
             u_l, u_a, u_h = _col_ud(cab, "largo"), _col_ud(cab, "ancho"), _col_ud(cab, "alto")
             for f in filas[1:]:
                 if not f or f[i_ref] in (None, ""):
                     continue
                 ref = str(f[i_ref]).strip()
-                l, a, h = _num(f[i_l]), _num(f[i_a]), _num(f[i_h])
+                l, a, h = med(f, i_l), med(f, i_a), med(f, i_h)
                 uds = (_num(f[i_uds]) if i_uds is not None else 1) or 1
-                ud = [_num(f[i]) if i is not None else None for i in (u_l, u_a, u_h)]
+                ean = str(f[i_ean]).strip() if i_ean is not None and f[i_ean] not in (None, "") else ""
+                desc = str(f[i_desc] or "") if i_desc is not None else ""
+                sin = not (l and a and h)
+                ud = [med(f, i) for i in (u_l, u_a, u_h)]
                 articulos[ref] = {
-                    "ref": ref,
-                    "desc": str(f[i_desc] or "") if i_desc is not None else "",
-                    "vol_ud": l * a * h / uds,
-                    "u": ud if all(ud) else dims_unidad(l, a, h, uds),
+                    "ref": ref, "ean": ean, "desc": desc or (f"EAN {ean}" if ean else ""),
+                    "sin_medidas": sin,
+                    "vol_ud": 0 if sin else l * a * h / uds,
+                    "u": None if sin else (ud if all(ud) else dims_unidad(l, a, h, uds)),
                 }
         else:  # hoja de cajas de envío
             i_nom = _col(cab, "caja", "nombre", "tipo")
@@ -105,7 +127,9 @@ def leer_excel(ruta=EXCEL):
             for f in filas[1:]:
                 if not f or f[i_nom] in (None, ""):
                     continue
-                l, a, h = _num(f[i_l]), _num(f[i_a]), _num(f[i_h])
+                l, a, h = med(f, i_l), med(f, i_a), med(f, i_h)
+                if not (l and a and h):
+                    continue
                 nombre = str(f[i_nom]).strip()
                 if i_solo is not None:
                     solo = str(f[i_solo] or "").strip().lower() in ("sí", "si", "x", "1", "true", "yes")
@@ -117,8 +141,20 @@ def leer_excel(ruta=EXCEL):
     if not articulos:
         raise ValueError("No encuentro la hoja de artículos (falta columna Referencia).")
     if not cajas:
-        raise ValueError("No encuentro la hoja de cajas de envío.")
+        cajas = [dict(c) for c in (cajas_por_defecto or CAJAS_UGARI)]
     return articulos, cajas
+
+
+def buscar_ref(articulos, texto):
+    """Referencia del maestro que corresponde a un texto (referencia o EAN), o None."""
+    t = str(texto or "").strip()
+    if t in articulos:
+        return t
+    n = re.sub(r"[\s.\-_/]", "", t).upper()
+    for k, a in articulos.items():
+        if re.sub(r"[\s.\-_/]", "", k).upper() == n or (a.get("ean") and a["ean"] == n):
+            return k
+    return None
 
 
 # ---------- cálculo ----------
@@ -174,6 +210,8 @@ def empaquetar(pedido, articulos, cajas):
     for ref, cant in pedido:
         if ref not in articulos:
             raise ValueError(f"Referencia desconocida: {ref}")
+        if articulos[ref].get("sin_medidas"):
+            raise ValueError(f"{ref}: faltan las medidas en el Excel maestro.")
         pend[ref] = pend.get(ref, 0) + int(cant)
     orden = sorted(pend, key=lambda r: articulos[r]["vol_ud"], reverse=True)
     for ref in orden:
@@ -310,10 +348,14 @@ def pedir_pedido(articulos):
         if len(partes) != 2 or not partes[1].isdigit():
             print("Formato: REFERENCIA CANTIDAD")
             continue
-        if partes[0] not in articulos:
+        ref = buscar_ref(articulos, partes[0])
+        if ref is None:
             print(f"No existe la referencia {partes[0]}.")
             continue
-        pedido.append((partes[0], int(partes[1])))
+        if articulos[ref].get("sin_medidas"):
+            print(f"{ref}: faltan las medidas en el Excel maestro.")
+            continue
+        pedido.append((ref, int(partes[1])))
 
 
 def main():
@@ -336,8 +378,8 @@ def main():
             imprimir(empaquetar(pedir_pedido(articulos), articulos, cajas), articulos, albaran, pedido_cli)
         elif op == "2":
             for a in articulos.values():
-                u = " x ".join(f"{v:g}" for v in a["u"])
-                print(f"{a['ref']:<14}{a['desc']:<40} unidad {u} cm")
+                u = "FALTAN MEDIDAS" if a["u"] is None else "unidad " + " x ".join(f"{v:g}" for v in a["u"]) + " cm"
+                print(f"{a['ref']:<14}{a['desc']:<40} {u}")
         elif op == "3":
             for c in sorted(cajas, key=lambda c: c["vol"]):
                 print(f"{c['nombre']:<8}{c['l']:g} x {c['a']:g} x {c['h']:g} cm")

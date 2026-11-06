@@ -210,9 +210,11 @@ const norm = s => String(s ?? "").toUpperCase().replace(/[\s.\-_/]/g, "");
 /* ---------- maestro ---------- */
 function cargarMaestro(arts, cajas){
   ARTS = {}; CAJAS = [];
-  for (const [ref, desc, l, a, h, uds, ul, ua, uh] of arts){
-    ARTS[ref] = {ref, desc, l, a, h, uds:uds||1, ul, ua, uh, vol_ud: l*a*h/(uds||1)};
-    ARTS[ref].u = dimsUnidad(ARTS[ref]);
+  for (const [ref, desc, l, a, h, uds, ul, ua, uh, ean] of arts){
+    const sinMedidas = !(l > 0 && a > 0 && h > 0);
+    ARTS[ref] = {ref, desc: desc || (ean ? `EAN ${ean}` : ""), ean: ean ? String(ean) : "", l, a, h, uds:uds||1, ul, ua, uh,
+      sinMedidas, vol_ud: sinMedidas ? 0 : l*a*h/(uds||1)};
+    ARTS[ref].u = sinMedidas ? null : dimsUnidad(ARTS[ref]);
   }
   const hayCol = cajas.some(c => c[4] !== undefined && c[4] !== null);
   for (const [nombre, l, a, h, solo] of cajas)
@@ -223,45 +225,52 @@ function buscarRef(r){
   if (!r) return null;
   if (ARTS[r]) return r;
   const n = norm(r);
-  return Object.keys(ARTS).find(k => norm(k) === n) || null;
+  return Object.keys(ARTS).find(k => norm(k) === n || (ARTS[k].ean && ARTS[k].ean === n)) || null;
 }
+const textoOrigen = nombre => { const sm = Object.values(ARTS).filter(a => a.sinMedidas).length;
+  return `${nombre}: ${Object.keys(ARTS).length} artículos${sm ? ` (${sm} sin medidas)` : ""}, ${CAJAS.length} cajas (${CAJAS.map(c=>c.nombre).join(", ")})`; };
+const refDeLinea = l => buscarRef(l.ref) || buscarRef(String(l.otros?.EAN || l.otros?.ean || ""));
 function leerLibro(wb){
   const arts = [], cajas = [];
   for (const name of wb.SheetNames){
-    const filas = XLSX.utils.sheet_to_json(wb.Sheets[name], {header:1, blankrows:false});
-    if (!filas.length) continue;
-    const cab = filas[0];
+    const todas = XLSX.utils.sheet_to_json(wb.Sheets[name], {header:1, blankrows:false});
+    // la cabecera puede no estar en la primera fila: se busca la que tenga largo, ancho y alto
+    const ic = todas.slice(0, 15).findIndex(f => col(f,"largo") >= 0 && col(f,"ancho") >= 0 && col(f,"alto") >= 0);
+    if (ic < 0) continue;
+    const cab = todas[ic], filas = todas.slice(ic);
     const iL = col(cab,"largo"), iA = col(cab,"ancho"), iH = col(cab,"alto");
-    if (iL < 0 || iA < 0 || iH < 0) continue;
+    const fx = i => /\bmm\b|\(mm\)/i.test(String(cab[i] ?? "")) ? 0.1 : 1;   // medidas en mm -> cm
+    const med = (f, i) => { const v = num(f[i]); return v == null ? null : v * fx(i); };
     const iRef = col(cab,"ref","código","codigo");
     if (iRef >= 0){
       const iD = col(cab,"desc","nombre"), iU = col(cab,"uds","unidades","cantidad");
       const colUd = k => cab.findIndex(c => { const t = String(c ?? "").toLowerCase(); return t.includes(k) && /\bud\b|unidad/.test(t); });
-      const uL = colUd("largo"), uA = colUd("ancho"), uH = colUd("alto");
+      const uL = colUd("largo"), uA = colUd("ancho"), uH = colUd("alto"), iE = col(cab,"ean");
       for (const f of filas.slice(1)){
-        if (f[iRef] === undefined || f[iRef] === "") continue;
-        arts.push([String(f[iRef]).trim(), iD>=0 ? String(f[iD]??"") : "", num(f[iL]), num(f[iA]), num(f[iH]), iU>=0 ? num(f[iU]) : 1,
-          uL>=0 ? num(f[uL]) : null, uA>=0 ? num(f[uA]) : null, uH>=0 ? num(f[uH]) : null]);
+        if (f[iRef] === undefined || f[iRef] === "" || f[iRef] === null) continue;
+        arts.push([String(f[iRef]).trim(), iD>=0 ? String(f[iD]??"") : "", med(f,iL), med(f,iA), med(f,iH), iU>=0 ? num(f[iU]) : 1,
+          uL>=0 ? med(f,uL) : null, uA>=0 ? med(f,uA) : null, uH>=0 ? med(f,uH) : null, iE>=0 ? String(f[iE] ?? "").trim() : ""]);
       }
     } else {
       let iN = col(cab,"caja","nombre","tipo"); if (iN < 0) iN = 0;
       const iS = col(cab,"solo","oblig","necesari");
       for (const f of filas.slice(1)){
         if (f[iN] === undefined || f[iN] === "") continue;
-        cajas.push([String(f[iN]).trim(), num(f[iL]), num(f[iA]), num(f[iH]),
+        cajas.push([String(f[iN]).trim(), med(f,iL), med(f,iA), med(f,iH),
           iS >= 0 ? /^(s[ií]|x|1|true|yes)$/i.test(String(f[iS] ?? "").trim()) : null]);
       }
     }
   }
   if (!arts.length) throw new Error("No encuentro la hoja de artículos (falta la columna Referencia).");
-  if (!cajas.length) throw new Error("No encuentro la hoja de cajas de envío (Caja, Largo, Ancho, Alto).");
+  // sin hoja de cajas: se mantienen las cajas actuales (S, M, L, XL)
+  if (!cajas.length) cajas.push(...(CAJAS.length ? CAJAS.map(c => [c.nombre, c.l, c.a, c.h, c.soloSiNoCabe]) : EJEMPLO.cajas));
   return {arts, cajas};
 }
 function pintarMaestro(){
   $("tCajas").innerHTML = "<tr><th>Caja de envío</th><th>Medidas (cm)</th><th>Volumen (cm³)</th></tr>" +
     [...CAJAS].sort((a,b)=>a.vol-b.vol).map(c=>`<tr><td>${esc(c.nombre)}</td><td class="n">${c.l} × ${c.a} × ${c.h}</td><td class="n">${fmt(c.vol)}</td></tr>`).join("");
   $("tArt").innerHTML = "<tr><th>Ref.</th><th>Descripción</th><th>Caja art. (cm)</th><th>Uds</th><th>Unidad (cm)</th></tr>" +
-    Object.values(ARTS).map(a=>`<tr><td>${esc(a.ref)}</td><td>${esc(a.desc)}</td><td class="n">${a.l} × ${a.a} × ${a.h}</td><td class="n">${a.uds}</td><td class="n">${a.u.map(cm).join(" × ")}${a.ul&&a.ua&&a.uh?"":" (estimada)"}</td></tr>`).join("");
+    Object.values(ARTS).map(a=>`<tr><td>${esc(a.ref)}</td><td>${esc(a.desc)}</td><td class="n">${a.sinMedidas ? "—" : `${cm(a.l)} × ${cm(a.a)} × ${cm(a.h)}`}</td><td class="n">${a.uds}</td><td class="n">${a.sinMedidas ? '<span class="err">Faltan medidas</span>' : a.u.map(cm).join(" × ") + (a.ul&&a.ua&&a.uh ? "" : " (estimada)")}</td></tr>`).join("");
   $("refsList").innerHTML = Object.values(ARTS).map(a=>`<option value="${esc(a.ref)}">${esc(a.desc)}</option>`).join("");
 }
 
@@ -270,17 +279,17 @@ function pintarLineas(){
   let malas = 0;
   $("tLineas").innerHTML = "<tr><th></th><th>Referencia</th><th>Descripción en albarán</th><th>Uds</th><th>En maestro</th><th>Otros datos</th><th></th></tr>" +
     LINEAS.map((l,i) => {
-      const k = buscarRef(l.ref); if (!k) malas++;
-      return `<tr class="${k?"":"bad"}">
+      const k = refDeLinea(l), sm = k && ARTS[k].sinMedidas; if (!k || sm) malas++;
+      return `<tr class="${k && !sm ?"":"bad"}">
         <td><span class="dot" style="background:${k?colorDe(k):"transparent"}"></span></td>
         <td><input list="refsList" data-i="${i}" data-f="ref" id="lr${i}" value="${esc(l.ref)}" aria-label="Referencia"></td>
         <td><input data-i="${i}" data-f="desc" id="ld${i}" value="${esc(l.desc)}" aria-label="Descripción"></td>
         <td style="width:90px"><input type="number" min="0" data-i="${i}" data-f="cant" id="lc${i}" value="${l.cant}" aria-label="Unidades"></td>
-        <td>${k ? `<span class="ok">✓</span> ${esc(ARTS[k].desc)}` : '<span class="err">No está en el maestro</span>'}</td>
+        <td>${!k ? '<span class="err">No está en el maestro</span>' : sm ? `<span class="err">Faltan medidas en el maestro</span> ${esc(ARTS[k].desc)}` : `<span class="ok">✓</span> ${esc(ARTS[k].desc)}`}</td>
         <td class="extra">${Object.entries(l.otros||{}).filter(([,v]) => v !== "" && v != null).map(([k,v]) => `${esc(k)}: ${esc(v)}`).join(" · ")}</td>
         <td><button class="x" data-del="${i}" aria-label="Quitar línea">✕</button></td></tr>`;
     }).join("");
-  $("avisoLineas").innerHTML = malas ? `<span class="err">${malas} línea(s) sin referencia en el maestro: corrígelas o añádelas al Excel.</span>` : "";
+  $("avisoLineas").innerHTML = malas ? `<span class="err">${malas} línea(s) sin referencia en el maestro o sin medidas: corrígelas o complétalas en el Excel.</span>` : "";
 }
 $("tLineas").addEventListener("change", e => {
   const t = e.target, i = +t.dataset.i; if (isNaN(i)) return;
@@ -463,8 +472,9 @@ function pedidoDe(lineas){
   const pedido = [], fuera = [];
   for (const l of lineas){
     if (!(l.cant > 0)) continue;
-    const k = buscarRef(l.ref);
-    if (k) pedido.push([k, l.cant]); else fuera.push(l.ref || "(sin referencia)");
+    const k = refDeLinea(l);
+    if (k && !ARTS[k].sinMedidas) pedido.push([k, l.cant]);
+    else fuera.push(k ? `${k} (sin medidas)` : (l.ref || "(sin referencia)"));
   }
   return {pedido, fuera};
 }
@@ -541,7 +551,7 @@ function pintarResultado(r){
         <button id="saveBtn" class="ghost">${r.guardado ? "Guardado en el registro" : "Guardar en el registro"}</button>
         <span id="pdfEstado" class="note"></span>
       </div>
-      ${fuera.length ? `<p class="err">No incluidas (no están en el maestro): ${fuera.map(esc).join(", ")}</p>` : ""}
+      ${fuera.length ? `<p class="err">No incluidas (no están en el maestro o les faltan medidas): ${fuera.map(esc).join(", ")}</p>` : ""}
       <div class="labels">${res.map((c,i)=>`
         <article class="label">
           <div class="head"><b>BULTO ${i+1} / ${total}</b><span>${esc(c.tipo.nombre)}</span></div>
@@ -948,7 +958,7 @@ $("xls").addEventListener("change", async ev => {
     const {arts, cajas} = leerLibro(XLSX.read(await f.arrayBuffer(), {type:"array"}));
     cargarMaestro(arts, cajas);
     try { localStorage.setItem("maestro", JSON.stringify({nombre:f.name, arts, cajas})); } catch(_){}
-    $("origen").className = "note"; $("origen").textContent = `${f.name}: ${arts.length} artículos, ${cajas.length} cajas`;
+    $("origen").className = "note"; $("origen").textContent = textoOrigen(f.name);
     pintarLineas(); if (LINEAS.length) calcular();
   } catch(e){ $("origen").className = "err"; $("origen").textContent = e.message; }
   ev.target.value = "";
@@ -959,7 +969,7 @@ let guardado = null;
 try { guardado = JSON.parse(localStorage.getItem("maestro") || "null"); } catch(_){}
 if (guardado?.arts?.length && guardado?.cajas?.length){
   cargarMaestro(guardado.arts, guardado.cajas);
-  $("origen").textContent = `${guardado.nombre}: ${guardado.arts.length} artículos, ${guardado.cajas.length} cajas`;
+  $("origen").textContent = textoOrigen(guardado.nombre);
   ALBARANES = [{alb:"", ped:"", cli:"El Corte Inglés", fecha:"", otros:{}, lineas:[]}]; activar(0, false);
   $("out").innerHTML = '<p class="note">Sube o pega un albarán para ver los bultos.</p>';
 } else {

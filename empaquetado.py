@@ -163,32 +163,101 @@ def _orientaciones(u):
     return list(dict.fromkeys(permutations(u)))
 
 
-def _llenar(caja, items):
-    """Coloca por capas lo que quepa de items [(ref, cant, dims)]. Devuelve (capas, puestos)."""
-    z, capas, puestos = 0.0, [], {}
+def _mejor(u, w, d, h, q):
+    """Mejor colocación en rejilla de q unidades u dentro de un espacio w x d x h (cm)."""
+    mejor = None
+    for ox, oy, oz in _orientaciones(u):
+        nx, ny, alt = int(w / ox + EPS), int(d / oy + EPS), int(h / oz + EPS)
+        per = nx * ny
+        if not per or alt < 1:
+            continue
+        k = min(q, per * alt)
+        niveles = -(-k // per)
+        usado = niveles * oz
+        if mejor is None or k > mejor["k"] or (k == mejor["k"] and usado < mejor["usado"]):
+            mejor = {"o": (ox, oy, oz), "nx": nx, "ny": ny, "per": per, "k": k, "niveles": niveles, "usado": usado}
+    return mejor
+
+
+def _llenar(caja, items, huecos_grandes_primero=False):
+    """Coloca lo que quepa de items [(ref, cant, dims)] por capas, aprovechando huecos.
+
+    Cada colocación es una rejilla nx x ny con varias alturas que empieza en (x0, y0, z).
+    Los huecos que deja (franja a la derecha, franja al fondo y lo que falta de una capa
+    incompleta) se rellenan con las referencias siguientes antes de seguir apilando.
+    Devuelve (capas, puestos).
+    """
+    L, A, H = caja["l"], caja["a"], caja["h"]
+    arriba = [0.0, 0.0, L, A, 0.0, H]          # espacio libre por encima de todo lo colocado
+    huecos, capas, puestos = [], [], {}
+
+    def colocar(reg, ref, q, u, es_hueco):
+        x, y, w, d, z, h = reg
+        m = _mejor(u, w, d, h, q)
+        if not m:
+            return 0, []
+        ox, oy, oz = m["o"]
+        capas.append({"ref": ref, "x0": x, "y0": y, "z": z, "hueco": es_hueco, **m})
+        llenos, resto = divmod(m["k"], m["per"])
+        nuevos = []
+        if w - m["nx"] * ox > EPS:
+            nuevos.append([x + m["nx"] * ox, y, w - m["nx"] * ox, d, z, m["usado"]])
+        if d - m["ny"] * oy > EPS:
+            nuevos.append([x, y + m["ny"] * oy, m["nx"] * ox, d - m["ny"] * oy, z, m["usado"]])
+        if resto:
+            zp = z + llenos * oz
+            fila, col = divmod(resto, m["nx"])
+            if col:
+                nuevos.append([x + col * ox, y + fila * oy, (m["nx"] - col) * ox, oy, zp, oz])
+                fila += 1
+            if m["ny"] - fila > 0:
+                nuevos.append([x, y + fila * oy, m["nx"] * ox, (m["ny"] - fila) * oy, zp, oz])
+        if es_hueco and h - m["usado"] > EPS:
+            nuevos.append([x, y, m["nx"] * ox, m["ny"] * oy, z + m["usado"], h - m["usado"]])
+        return m, nuevos
+
     for ref, q, u in items:
         while q > 0:
-            mejor = None
-            for ox, oy, oz in _orientaciones(u):
-                nx = int(caja["l"] / ox + EPS)
-                ny = int(caja["a"] / oy + EPS)
-                alt = int((caja["h"] - z) / oz + EPS)
-                per = nx * ny
-                if not per or alt < 1:
-                    continue
-                k = min(q, per * alt)
-                niveles = -(-k // per)
-                usado = niveles * oz
-                if mejor is None or k > mejor["k"] or (k == mejor["k"] and usado < mejor["usado"]):
-                    mejor = {"o": (ox, oy, oz), "nx": nx, "ny": ny, "per": per,
-                             "k": k, "niveles": niveles, "usado": usado}
-            if mejor is None:
-                break
-            capas.append({"ref": ref, "z": z, **mejor})
-            puestos[ref] = puestos.get(ref, 0) + mejor["k"]
-            z += mejor["usado"]
-            q -= mejor["k"]
+            puesto = False
+            clave = ((lambda r: -r[2] * r[3] * r[5]) if huecos_grandes_primero
+                     else (lambda r: (r[4], r[2] * r[3] * r[5])))
+            for reg in sorted(huecos, key=clave):
+                m, nuevos = colocar(reg, ref, q, u, True)
+                if m:
+                    huecos.remove(reg)
+                    huecos.extend(nuevos)
+                    puesto = True
+                    break
+            if not puesto:
+                m, nuevos = colocar(arriba, ref, q, u, False)
+                if not m:
+                    break
+                huecos.extend(nuevos)
+                arriba = [0.0, 0.0, L, A, arriba[4] + m["usado"], arriba[5] - m["usado"]]
+            puestos[ref] = puestos.get(ref, 0) + m["k"]
+            q -= m["k"]
     return capas, puestos
+
+
+def _llenar_mejor(caja, items):
+    """Prueba varios órdenes de colocación y se queda con el que mete más volumen."""
+    vol = lambda it: it[2][0] * it[2][1] * it[2][2]
+    ordenes = [
+        list(items),
+        sorted(items, key=lambda it: -max(it[2])),
+        sorted(items, key=lambda it: -min(it[2])),
+        sorted(items, key=lambda it: -vol(it) * it[1]),
+        sorted(items, key=lambda it: vol(it)),
+    ]
+    mejor = None
+    for orden, grandes in [(o, g) for g in (False, True) for o in ordenes]:
+        capas, puestos = _llenar(caja, orden, grandes)
+        v = sum(puestos[r] * vol(it) for it in items for r in [it[0]] if r in puestos)
+        if mejor is None or v > mejor[0] + EPS or (abs(v - mejor[0]) <= EPS and len(capas) < len(mejor[1])):
+            mejor = (v, capas, puestos)
+        if all(puestos.get(r) == q for r, q, _ in items):
+            break
+    return mejor[1], mejor[2]
 
 
 def _cabe(u, caja):
@@ -222,7 +291,7 @@ def empaquetar(pedido, articulos, cajas):
 
     def meter(tipo, refs, candidatas):
         items = [(r, pend[r], articulos[r]["u"]) for r in refs if pend[r] > 0]
-        capas, puestos = _llenar(tipo, items)
+        capas, puestos = _llenar_mejor(tipo, items)
         if not puestos:
             raise ValueError("No se ha podido colocar la mercancía.")
         cont = [(r, puestos[r], articulos[r]["u"]) for r in orden if puestos.get(r)]
@@ -230,14 +299,14 @@ def empaquetar(pedido, articulos, cajas):
         for t in candidatas:  # la caja más pequeña donde cabe lo mismo
             if t["vol"] >= tipo["vol"]:
                 break
-            c2, p2 = _llenar(t, cont)
+            c2, p2 = _llenar_mejor(t, cont)
             if all(p2.get(r) == q for r, q, _ in cont):
                 elegido, capas, puestos = t, c2, p2
                 break
         for r, q in puestos.items():
             pend[r] -= q
         usado = sum(q * articulos[r]["vol_ud"] for r, q in puestos.items())
-        bultos.append({"caja": elegido, "capas": capas, "contenido": puestos, "usado": usado})
+        bultos.append({"caja": elegido, "capas": capas, "contenido": _ordenar(capas, puestos), "usado": usado})
 
     # 1) solo lo obligatorio va en caja grande (XL); el hueco que sobra se aprovecha
     while True:
@@ -250,7 +319,44 @@ def empaquetar(pedido, articulos, cajas):
     # 2) el resto, en la caja normal más grande (L) o en una más pequeña si basta
     while any(pend[r] > 0 for r in orden):
         meter(principal, orden, normales)
+
+    # 3) intentar quitar el último bulto metiendo su contenido en otro ya hecho
+    def reempaquetar(contenido, candidatas):
+        items = [(r, contenido[r], articulos[r]["u"]) for r in orden if contenido.get(r)]
+        for t in candidatas:
+            capas, puestos = _llenar_mejor(t, items)
+            if all(puestos.get(r) == q for r, q, _ in items):
+                return {"caja": t, "capas": capas, "contenido": _ordenar(capas, puestos),
+                        "usado": sum(q * articulos[r]["vol_ud"] for r, q in puestos.items())}
+        return None
+
+    while len(bultos) > 1:
+        ultimo = bultos[-1]
+        hecho = False
+        for i in range(len(bultos) - 2, -1, -1):
+            junto = dict(bultos[i]["contenido"])
+            for r, q in ultimo["contenido"].items():
+                junto[r] = junto.get(r, 0) + q
+            tope = bultos[i]["caja"] if bultos[i]["caja"]["vol"] > principal["vol"] else principal
+            nuevo = reempaquetar(junto, [t for t in tipos if t["vol"] <= tope["vol"]
+                                         and (not t.get("solo_si_no_cabe") or t is bultos[i]["caja"])])
+            if nuevo:
+                bultos[i] = nuevo
+                bultos.pop()
+                hecho = True
+                break
+        if not hecho:
+            break
     return bultos
+
+
+def _ordenar(capas, puestos):
+    """Contenido en orden de colocación, de abajo arriba (por la altura de la primera capa de cada ref)."""
+    pos = {}
+    for i, k in enumerate(capas):
+        z, j = pos.get(k["ref"], (k["z"], i))
+        pos[k["ref"]] = (min(z, k["z"]), j)
+    return {r: puestos[r] for r in sorted(puestos, key=lambda r: pos.get(r, (0, 0)))}
 
 
 def colocacion(bulto, ref):
@@ -262,6 +368,8 @@ def colocacion(bulto, ref):
         t = f"{llenos} altura{'s' if llenos > 1 else ''} de {k['nx']}x{k['ny']}" if llenos else ""
         if resto:
             t += f" + {resto} encima" if t else f"1 capa de {resto} uds"
+        if k.get("hueco"):
+            t += " en el hueco libre"
         partes.append(t)
     return " · ".join(partes)
 
@@ -276,7 +384,8 @@ def pasos_datos(bulto):
     out = []
     for k in bulto["capas"]:
         llenos, resto = divmod(k["k"], k["per"])
-        base = {"ref": k["ref"], "n": orden.index(k["ref"]) + 1, "nx": k["nx"], "ny": k["ny"], "o": tuple(k["o"])}
+        base = {"ref": k["ref"], "n": orden.index(k["ref"]) + 1, "nx": k["nx"], "ny": k["ny"], "o": tuple(k["o"]),
+                "x0": k.get("x0", 0), "y0": k.get("y0", 0), "hueco": k.get("hueco", False)}
         if llenos:
             out.append({**base, "uds": llenos * k["per"], "alturas": llenos, "cuantos": k["per"],
                         "z": k["z"], "parcial": False})
@@ -289,6 +398,8 @@ def pasos_datos(bulto):
 def texto_paso(p):
     ox, oy, oz = p["o"]
     donde = "En el fondo de la caja" if p["z"] < EPS else f"Encima, a {_cm(p['z'])} cm del fondo"
+    if p.get("x0", 0) > EPS or p.get("y0", 0) > EPS:
+        donde += f", en el hueco a {_cm(p['x0'])} cm del lado izquierdo y {_cm(p['y0'])} cm del frente"
     if p["parcial"]:
         que = f"{p['uds']} uds de {p['ref']}, empezando por la esquina delantera izquierda y fila a fila"
     else:
@@ -301,7 +412,8 @@ def texto_paso(p):
 def celdas_paso(p):
     """Rectángulos en planta (x a lo largo, y desde el frente) de las unidades de un paso."""
     ox, oy, _ = p["o"]
-    return [((i % p["nx"]) * ox, (i // p["nx"]) * oy, ox, oy) for i in range(p["cuantos"])]
+    x0, y0 = p.get("x0", 0), p.get("y0", 0)
+    return [(x0 + (i % p["nx"]) * ox, y0 + (i // p["nx"]) * oy, ox, oy) for i in range(p["cuantos"])]
 
 
 def pasos(bulto):

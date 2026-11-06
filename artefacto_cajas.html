@@ -325,26 +325,72 @@ function orientaciones([a,b,c]){
   for (const o of [[a,b,c],[a,c,b],[b,a,c],[b,c,a],[c,a,b],[c,b,a]]){ const k = o.join(); if (!vistas.has(k)){ vistas.add(k); out.push(o); } }
   return out;
 }
-function llenar(tipo, items){
-  let z = 0; const capas = [], puestos = {};
+function mejorRejilla(u, w, d, h, q){
+  let mejor = null;
+  for (const [ox,oy,oz] of orientaciones(u)){
+    const nx = Math.floor(w/ox + EPS), ny = Math.floor(d/oy + EPS), alt = Math.floor(h/oz + EPS), per = nx*ny;
+    if (!per || alt < 1) continue;
+    const k = Math.min(q, per*alt), niveles = Math.ceil(k/per), usado = niveles*oz;
+    if (!mejor || k > mejor.k || (k === mejor.k && usado < mejor.usado)) mejor = {o:[ox,oy,oz], nx, ny, per, k, niveles, usado};
+  }
+  return mejor;
+}
+/* Coloca por capas aprovechando huecos: franja a la derecha, franja al fondo y lo que falta
+   de una capa incompleta se rellenan con las referencias siguientes antes de seguir apilando. */
+function llenar(tipo, items, grandesPrimero = false){
+  const L = tipo.l, A = tipo.a, H = tipo.h;
+  let arriba = [0, 0, L, A, 0, H];
+  let huecos = []; const capas = [], puestos = {};
+  const colocar = (reg, it, q, esHueco) => {
+    const [x, y, w, d, z, h] = reg, m = mejorRejilla(it.u, w, d, h, q);
+    if (!m) return [null, []];
+    const [ox, oy, oz] = m.o;
+    capas.push({ref:it.ref, x0:x, y0:y, z, hueco:esHueco, ...m});
+    const llenos = Math.floor(m.k/m.per), resto = m.k % m.per, nuevos = [];
+    if (w - m.nx*ox > EPS) nuevos.push([x + m.nx*ox, y, w - m.nx*ox, d, z, m.usado]);
+    if (d - m.ny*oy > EPS) nuevos.push([x, y + m.ny*oy, m.nx*ox, d - m.ny*oy, z, m.usado]);
+    if (resto){
+      const zp = z + llenos*oz; let fila = Math.floor(resto/m.nx); const col = resto % m.nx;
+      if (col){ nuevos.push([x + col*ox, y + fila*oy, (m.nx - col)*ox, oy, zp, oz]); fila++; }
+      if (m.ny - fila > 0) nuevos.push([x, y + fila*oy, m.nx*ox, (m.ny - fila)*oy, zp, oz]);
+    }
+    if (esHueco && h - m.usado > EPS) nuevos.push([x, y, m.nx*ox, m.ny*oy, z + m.usado, h - m.usado]);
+    return [m, nuevos];
+  };
+  const clave = grandesPrimero ? (r => -r[2]*r[3]*r[5]) : (r => r[4]*1e9 + r[2]*r[3]*r[5]);
   for (const it of items){
     let q = it.q;
     while (q > 0){
-      let mejor = null;
-      for (const [ox,oy,oz] of orientaciones(it.u)){
-        const nx = Math.floor(tipo.l/ox + EPS), ny = Math.floor(tipo.a/oy + EPS), per = nx*ny;
-        const alt = Math.floor((tipo.h - z)/oz + EPS);
-        if (!per || alt < 1) continue;
-        const k = Math.min(q, per*alt), niveles = Math.ceil(k/per), usado = niveles*oz;
-        if (!mejor || k > mejor.k || (k === mejor.k && usado < mejor.usado)) mejor = {o:[ox,oy,oz], nx, ny, per, k, niveles, usado};
+      let m = null;
+      for (const reg of [...huecos].sort((a,b) => clave(a) - clave(b))){
+        const [mm, nuevos] = colocar(reg, it, q, true);
+        if (mm){ huecos = huecos.filter(h => h !== reg).concat(nuevos); m = mm; break; }
       }
-      if (!mejor) break;
-      capas.push({ref:it.ref, z, ...mejor});
-      puestos[it.ref] = (puestos[it.ref]||0) + mejor.k;
-      z += mejor.usado; q -= mejor.k;
+      if (!m){
+        const [mm, nuevos] = colocar(arriba, it, q, false);
+        if (!mm) break;
+        huecos = huecos.concat(nuevos); m = mm;
+        arriba = [0, 0, L, A, arriba[4] + mm.usado, arriba[5] - mm.usado];
+      }
+      puestos[it.ref] = (puestos[it.ref]||0) + m.k; q -= m.k;
     }
   }
-  return {capas, puestos, z};
+  return {capas, puestos};
+}
+/* Prueba varios órdenes de colocación y se queda con el que mete más volumen */
+function llenarMejor(tipo, items){
+  const v = it => it.u[0]*it.u[1]*it.u[2];
+  const ordenes = [items, [...items].sort((a,b) => Math.max(...b.u) - Math.max(...a.u)),
+    [...items].sort((a,b) => Math.min(...b.u) - Math.min(...a.u)),
+    [...items].sort((a,b) => v(b)*b.q - v(a)*a.q), [...items].sort((a,b) => v(a) - v(b))];
+  let mejor = null;
+  for (const g of [false, true]) for (const o of ordenes){
+    const r = llenar(tipo, o, g);
+    const vol = items.reduce((s,it) => s + (r.puestos[it.ref]||0)*v(it), 0);
+    if (!mejor || vol > mejor.vol + EPS || (Math.abs(vol - mejor.vol) <= EPS && r.capas.length < mejor.r.capas.length)) mejor = {vol, r};
+    if (items.every(it => r.puestos[it.ref] === it.q)) return r;
+  }
+  return mejor.r;
 }
 const cabeEn = (u, t) => orientaciones(u).some(([x,y,z]) => x <= t.l+EPS && y <= t.a+EPS && z <= t.h+EPS);
 /* Las cajas marcadas "solo si no cabe" (XL) se usan únicamente para unidades que no caben
@@ -359,13 +405,13 @@ function empaquetar(pedido){
       throw new Error(`${it.ref}: una unidad (${it.u.map(cm).join(" × ")} cm) no cabe ni en la caja ${mayor.nombre}.`);
   const res = [];
   const meter = (tipo, lista, candidatas) => {
-    const r = llenar(tipo, lista);
+    const r = llenarMejor(tipo, lista);
     if (!Object.keys(r.puestos).length) throw new Error("No se ha podido colocar la mercancía.");
     const cont = items.filter(i => r.puestos[i.ref]).map(i => ({...i, q:r.puestos[i.ref]}));
     let elegido = {tipo, ...r};
     for (const t of candidatas){
       if (t.vol >= tipo.vol) break;
-      const r2 = llenar(t, cont);
+      const r2 = llenarMejor(t, cont);
       if (cont.every(i => r2.puestos[i.ref] === i.q)){ elegido = {tipo:t, ...r2}; break; }
     }
     items.forEach(i => { i.q -= r.puestos[i.ref] || 0; });
@@ -380,13 +426,43 @@ function empaquetar(pedido){
   }
   // 2) el resto, en la caja normal más grande (L) o en una más pequeña si basta
   while (items.some(i => i.q > 0)) meter(principal, items.filter(i => i.q > 0), normales);
+  // 3) intentar quitar el último bulto metiendo su contenido en otro ya hecho
+  const base = Object.fromEntries(items.map(i => [i.ref, i]));
+  const reempaquetar = (contenido, candidatas) => {
+    const lista = Object.keys(base).filter(r => contenido[r]).map(r => ({...base[r], q:contenido[r]}));
+    for (const t of candidatas){
+      const r = llenarMejor(t, lista);
+      if (lista.every(i => r.puestos[i.ref] === i.q))
+        return {tipo:t, capas:r.capas, contenido:r.puestos, usado:Object.entries(r.puestos).reduce((s,[ref,u]) => s + u*ARTS[ref].vol_ud, 0)};
+    }
+    return null;
+  };
+  while (res.length > 1){
+    const ultimo = res[res.length-1]; let hecho = false;
+    for (let i = res.length - 2; i >= 0 && !hecho; i--){
+      const junto = {...res[i].contenido};
+      for (const [r,q] of Object.entries(ultimo.contenido)) junto[r] = (junto[r]||0) + q;
+      const tope = res[i].tipo.vol > principal.vol ? res[i].tipo : principal;
+      const nuevo = reempaquetar(junto, tipos.filter(t => t.vol <= tope.vol && (!t.soloSiNoCabe || t === res[i].tipo)));
+      if (nuevo){ res[i] = nuevo; res.pop(); hecho = true; }
+    }
+    if (!hecho) break;
+  }
   return res;
 }
+/* Referencias de un bulto en orden de colocación, de abajo arriba (por la altura de su primera capa) */
+function ordenRefs(c){
+  const pos = {};
+  c.capas.forEach((k, i) => { if (!(k.ref in pos)) pos[k.ref] = [k.z, i]; else pos[k.ref][0] = Math.min(pos[k.ref][0], k.z); });
+  return Object.keys(c.contenido).sort((a,b) => ((pos[a]?.[0] ?? 0) - (pos[b]?.[0] ?? 0)) || ((pos[a]?.[1] ?? 0) - (pos[b]?.[1] ?? 0)));
+}
+const contenidoOrdenado = c => ordenRefs(c).map(r => [r, c.contenido[r]]);
 function colocacion(c, ref){
   return c.capas.filter(k => k.ref === ref).map(k => {
     const llenos = Math.floor(k.k / k.per), resto = k.k % k.per;
     let t = llenos ? `${llenos} altura${llenos>1?"s":""} de ${k.nx}×${k.ny}` : "";
     if (resto) t += t ? ` + ${resto} encima` : `1 capa de ${resto} uds`;
+    if (k.hueco) t += " en el hueco libre";
     return t;
   }).join(" · ");
 }
@@ -404,12 +480,13 @@ function escena(c){
   fondo.push([P(0,T.a,0),P(T.l,T.a,0),P(T.l,T.a,T.h),P(0,T.a,T.h)]);
   fondo.push([P(0,0,0),P(0,T.a,0),P(0,T.a,T.h),P(0,0,T.h)]);
   fondo.push([P(0,0,0),P(T.l,0,0),P(T.l,T.a,0),P(0,T.a,0)]);
-  const unidades = [], orden = Object.keys(c.contenido);
+  const unidades = [], orden = ordenRefs(c);
   for (const k of c.capas){
     const [dx,dy,dz] = k.o;
     for (let i = 0; i < k.k; i++){
       const lvl = Math.floor(i/k.per), idx = i % k.per, ix = idx % k.nx, iy = Math.floor(idx/k.nx);
-      unidades.push({ref:k.ref, n:orden.indexOf(k.ref)+1, x:ix*dx, y:iy*dy, z:k.z+lvl*dz, dx, dy, dz, delante: iy === 0});
+      const x = (k.x0||0) + ix*dx, y = (k.y0||0) + iy*dy;
+      unidades.push({ref:k.ref, n:orden.indexOf(k.ref)+1, x, y, z:k.z+lvl*dz, dx, dy, dz, delante: y < 1e-6});
     }
   }
   unidades.sort((a,b) => (b.y-a.y) || (a.z-b.z) || (a.x-b.x));
@@ -566,7 +643,7 @@ function pintarResultado(r){
               <em>${Object.values(c.contenido).reduce((s,u)=>s+u,0)} uds · ${Object.keys(c.contenido).length} ref.</em></div>
           </div>
           <p class="orden">Colocar de abajo arriba:</p>
-          <ul>${Object.entries(c.contenido).map(([r,u],j)=>`
+          <ul>${contenidoOrdenado(c).map(([r,u],j)=>`
             <li><span class="mk" style="background:${colorDe(r)}">${j+1}</span><span class="q">${u}</span>
               <span><span class="r">${esc(r)}</span><span class="d">${esc(descDe(r))}</span><span class="d pl">${colocacion(c, r)}</span></span></li>`).join("")}
           </ul>
@@ -647,7 +724,7 @@ function paginasAlbaran(doc, {res, alb, ped, cli, fecha}){
     doc.text(`${uds} uds · ${Math.round(100*c.usado/T.vol)}% lleno · dibujo a escala`, x+3, y+7+dh+4);
     // lista de contenido
     const lx = vertical ? x+3 : x+dw, ly = vertical ? y+7+dh+8 : y+10, lw = vertical ? cw-6 : cw-dw-3;
-    const items = Object.entries(c.contenido), alto = (vertical ? y+ch-ly : ch-12);
+    const items = contenidoOrdenado(c), alto = (vertical ? y+ch-ly : ch-12);
     const rowH = Math.max(4.2, Math.min(10, alto/Math.max(1, items.length)));
     const fs = rowH >= 8 ? 9 : rowH >= 6 ? 7.5 : 6.3;
     doc.setFont("helvetica","bold"); doc.setFontSize(6.5); doc.setTextColor(90,90,90);
@@ -771,8 +848,8 @@ function datosRegistro(res, {alb, ped, cli, fecha}, otros, lineas){
     bultos: res.map(c => ({
       caja: c.tipo.nombre, medidas: `${c.tipo.l}x${c.tipo.a}x${c.tipo.h}`, l: c.tipo.l, a: c.tipo.a, h: c.tipo.h,
       usado: Math.round(c.usado),
-      contenido: Object.entries(c.contenido).map(([ref,uds]) => ({ref, uds, desc: descDe(ref), colocacion: colocacion(c, ref)})),
-      capas: c.capas.map(k => ({ref:k.ref, z:k.z, o:k.o, nx:k.nx, ny:k.ny, per:k.per, k:k.k, niveles:k.niveles, usado:k.usado}))
+      contenido: contenidoOrdenado(c).map(([ref,uds]) => ({ref, uds, desc: descDe(ref), colocacion: colocacion(c, ref)})),
+      capas: c.capas.map(k => ({ref:k.ref, x0:k.x0||0, y0:k.y0||0, z:k.z, hueco:!!k.hueco, o:k.o, nx:k.nx, ny:k.ny, per:k.per, k:k.k, niveles:k.niveles, usado:k.usado}))
     }))
   };
 }

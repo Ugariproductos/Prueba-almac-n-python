@@ -83,6 +83,7 @@ td.extra{font-size:.78rem;color:var(--muted);white-space:normal;min-width:140px}
 .summary{display:flex;gap:18px;flex-wrap:wrap;align-items:center;margin-bottom:16px}
 .big{display:flex;align-items:baseline;gap:8px}
 .big b{font-size:3rem;font-weight:800;line-height:1;font-variant-numeric:tabular-nums}
+.destino{background:var(--fg);color:var(--bg);font-weight:800;font-size:2rem;letter-spacing:.04em;padding:4px 14px;border-radius:4px;line-height:1.1}
 .chip{font-family:var(--mono);font-size:.85rem;background:var(--kraft-soft);border-radius:3px;padding:4px 9px}
 .labels{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:16px}
 .label{border:2px solid var(--fg);border-radius:3px;background:var(--panel);display:flex;flex-direction:column}
@@ -518,12 +519,24 @@ function cajaSVG(c){
 }
 
 const DESC_EXTRA = {};
-const ENVIO_CAMPOS = [["prov","Nº proveedor"],["dpto","Departamento"],["destCod","Lugar de destino"],
+const ENVIO_CAMPOS = [["plat","Plataforma (código)"],["prov","Nº proveedor"],["dpto","Departamento"],["destCod","Lugar de destino"],
   ["destino","Centro de destino"],["agencia","Agencia"],["bultosAlb","Total bultos (albarán)"]];
 $("envio").innerHTML = ENVIO_CAMPOS.map(([k,t]) => `<div class="field"><label for="e_${k}">${t}</label><input id="e_${k}"></div>`).join("");
 ENVIO_CAMPOS.forEach(([k]) => $("e_"+k).addEventListener("change", () => guardarActivo()));
+/* Destino grande para el almacén: por la plataforma de entrega (0050 Madrid, 0062 Barcelona).
+   Si el centro de destino es de Canarias o Portugal, siempre "MADRID · CANARIAS" o "MADRID · PORTUGAL". */
+const PLATAFORMAS = {"0050": "MADRID", "0062": "BARCELONA"};
+let ZONAS_DESTINO = {};   // código de lugar de destino -> zona (se cargará desde el Excel de destinos)
+const codigo4 = v => { const d = String(v || "").replace(/\D/g, ""); return d ? d.padStart(4, "0").slice(-4) : ""; };
+function destinoGrande(e){
+  if (!e) return "";
+  const zona = String(ZONAS_DESTINO[codigo4(e.destCod)] || "").toUpperCase();
+  if (/CANARIAS|LAS PALMAS|TENERIFE/.test(zona)) return "MADRID · CANARIAS";
+  if (/PORTUGAL/.test(zona)) return "MADRID · PORTUGAL";
+  return PLATAFORMAS[codigo4(e.plat)] || "";
+}
 const leerEnvio = () => Object.fromEntries(ENVIO_CAMPOS.map(([k]) => [k, $("e_"+k).value.trim()]));
-const textoEnvio = e => [e?.destCod || e?.destino ? `Destino ${[e.destCod, e.destino].filter(Boolean).join(" ")}` : "",
+const textoEnvio = e => [e?.plat ? `Plataforma ${e.plat}` : "", e?.destCod || e?.destino ? `Destino ${[e.destCod, e.destino].filter(Boolean).join(" ")}` : "",
   e?.agencia ? `Agencia ${e.agencia}` : "", e?.dpto ? `Dpto. ${e.dpto}` : "", e?.prov ? `Nº proveedor ${e.prov}` : "",
   e?.bultosAlb ? `Bultos según albarán: ${e.bultosAlb}` : ""].filter(Boolean).join(" · ");
 /* ---------- varios albaranes ---------- */
@@ -633,6 +646,7 @@ function pintarResultado(r){
   const total = res.length;
   $("out").innerHTML = `
       <div class="summary">
+        ${destinoGrande(envio) ? `<span class="destino">${esc(destinoGrande(envio))}</span>` : ""}
         <div class="big"><b>${total}</b><span>bulto${total>1?"s":""}</span></div>
         ${Object.entries(resumen).map(([k,n])=>`<span class="chip">${n} × ${esc(k)}</span>`).join("")}
         <span class="note">Albarán Ugari ${esc(alb)} · Pedido ${esc(cli)} ${esc(ped)} · ${esc(fechaES(fecha))}</span>
@@ -707,21 +721,29 @@ function crearPDF(lista){
 function paginasAlbaran(doc, {res, alb, ped, cli, fecha, envio}){
   const M = 10, W = 210 - 2*M, N = res.length, gap = 3;
   doc.setTextColor(20,20,20); doc.setFont("helvetica","bold"); doc.setFontSize(15);
-  doc.text("HOJA DE PREPARACIÓN", M, M+5);
-  doc.text(`${N} BULTO${N>1?"S":""}`, M+W, M+5, {align:"right"});
+  const dg = destinoGrande(envio);
+  const T0 = dg ? M + 17 : M;
+  if (dg){
+    doc.setFillColor(20,20,20); doc.rect(M, M-4, W, 16, "F");
+    doc.setTextColor(255,255,255); doc.setFont("helvetica","bold"); doc.setFontSize(30);
+    doc.text(dg, M+W/2, M+8.3, {align:"center"});
+    doc.setTextColor(20,20,20); doc.setFontSize(15);
+  }
+  doc.text("HOJA DE PREPARACIÓN", M, T0+5);
+  doc.text(`${N} BULTO${N>1?"S":""}`, M+W, T0+5, {align:"right"});
   const celdas = [[`PEDIDO ${cli.toUpperCase()}`, ped, .4], ["ALBARÁN UGARI", alb, .4], ["FECHA ALBARÁN", fechaES(fecha), .2]];
   let cx = M;
   for (const [t, v, f] of celdas){
-    doc.setDrawColor(30,30,30); doc.setLineWidth(0.5); doc.rect(cx, M+8, W*f, 15);
-    doc.setFont("helvetica","normal"); doc.setFontSize(7.5); doc.setTextColor(90,90,90); doc.text(t, cx+3, M+12.5);
-    doc.setFont("helvetica","bold"); doc.setFontSize(f > .3 ? 16 : 12); doc.setTextColor(20,20,20); doc.text(String(v), cx+3, M+20.5);
+    doc.setDrawColor(30,30,30); doc.setLineWidth(0.5); doc.rect(cx, T0+8, W*f, 15);
+    doc.setFont("helvetica","normal"); doc.setFontSize(7.5); doc.setTextColor(90,90,90); doc.text(t, cx+3, T0+12.5);
+    doc.setFont("helvetica","bold"); doc.setFontSize(f > .3 ? 16 : 12); doc.setTextColor(20,20,20); doc.text(String(v), cx+3, T0+20.5);
     cx += W*f;
   }
   const linEnvio = textoEnvio(envio);
   let lineasEnvio = [];
   if (linEnvio){ doc.setFont("helvetica","bold"); doc.setFontSize(8); doc.setTextColor(20,20,20);
-    lineasEnvio = doc.splitTextToSize(linEnvio, W).slice(0, 2); doc.text(lineasEnvio, M, M+27.3); }
-  const y0 = M + 27 + lineasEnvio.length*3.6, yFin = 282;
+    lineasEnvio = doc.splitTextToSize(linEnvio, W).slice(0, 2); doc.text(lineasEnvio, M, T0+27.3); }
+  const y0 = T0 + 27 + lineasEnvio.length*3.6, yFin = 282;
   const cols = N <= 3 ? 1 : 2, filas = Math.ceil(N/cols);
   const cw = (W - (cols-1)*gap)/cols, ch = (yFin - y0 - (filas-1)*gap)/filas;
   const vertical = ch > 115;                        // celdas altas: dibujo arriba y lista debajo
@@ -802,7 +824,7 @@ async function iniciarRegistro(){
 
 function pintarRegistro(){
   const q = norm($("regBuscar").value);
-  const lista = REGISTROS.filter(r => !q || norm([r.pedido_cliente, r.albaran, r.centro_destino, r.lugar_destino, r.agencia,
+  const lista = REGISTROS.filter(r => !q || norm([r.pedido_cliente, r.albaran, r.plataforma, r.centro_destino, r.lugar_destino, r.agencia,
     ...(r.bultos||[]).flatMap(b => b.contenido.map(x => x.ref))].join(" ")).includes(q));
   $("regEstado").textContent = REGISTROS.length ? `${lista.length} de ${REGISTROS.length} envíos` : "";
   if (!REGISTROS.length){ $("tReg").innerHTML = '<tr><td class="note">Todavía no hay envíos guardados. Calcula un albarán y pulsa «Guardar en el registro».</td></tr>'; return; }
@@ -815,7 +837,7 @@ function pintarRegistro(){
         <td class="n">${(r.bultos||[]).length}${r.bultos_albaran && +r.bultos_albaran !== (r.bultos||[]).length ? ` <span class="err" title="Bultos según albarán">(alb. ${esc(r.bultos_albaran)})</span>` : ""}</td><td>${Object.entries(cajas).map(([k,n]) => `${n}×${esc(k)}`).join(", ")}</td><td class="n">${uds}</td></tr>`;
       if (ABIERTO !== r.id) return fila;
       return fila + `<tr class="det"><td colspan="8">
-        <p class="note" style="margin:0 0 6px">${esc([r.cliente, textoEnvio({prov:r.numero_proveedor, dpto:r.departamento, destCod:r.lugar_destino,
+        <p class="note" style="margin:0 0 6px">${esc([r.cliente, textoEnvio({plat:r.plataforma, prov:r.numero_proveedor, dpto:r.departamento, destCod:r.lugar_destino,
           destino:r.centro_destino, agencia:r.agencia, bultosAlb:r.bultos_albaran})].filter(Boolean).join(" · "))}</p>
         <div class="det-b">${(r.bultos||[]).map((b,i) => `<div><b>Bulto ${i+1}/${r.bultos.length} · ${esc(b.caja)} (${esc(b.medidas)} cm)</b>
           ${b.contenido.map(x => `<span>${x.uds} × ${esc(x.ref)} ${esc(x.desc)}</span>`).join("")}</div>`).join("")}</div>
@@ -866,7 +888,7 @@ function datosRegistro(res, {alb, ped, cli, fecha, envio}, otros, lineas){
   const e = envio || {};
   return {
     albaran: alb, pedido_cliente: ped, cliente: cli, fecha_albaran: fecha, guardado: new Date().toISOString(),
-    numero_proveedor: e.prov || "", departamento: e.dpto || "", lugar_destino: e.destCod || "", centro_destino: e.destino || "",
+    plataforma: e.plat || "", numero_proveedor: e.prov || "", departamento: e.dpto || "", lugar_destino: e.destCod || "", centro_destino: e.destino || "",
     agencia: e.agencia || "", bultos_albaran: e.bultosAlb || "",
     otros_datos: otros || {},
     lineas_albaran: (lineas || []).map(l => ({ref:l.ref, desc:l.desc || "", cant:l.cant, otros:l.otros || {}})),
@@ -889,7 +911,7 @@ function abrirRegistro(r){
     usado: b.usado
   }));
   ACTIVO = -1;
-  const envio = {prov:r.numero_proveedor||"", dpto:r.departamento||"", destCod:r.lugar_destino||"", destino:r.centro_destino||"",
+  const envio = {plat:r.plataforma||"", prov:r.numero_proveedor||"", dpto:r.departamento||"", destCod:r.lugar_destino||"", destino:r.centro_destino||"",
     agencia:r.agencia||"", bultosAlb:r.bultos_albaran||""};
   ALBARANES = [{alb:r.albaran, ped:r.pedido_cliente, cli:r.cliente, fecha:r.fecha_albaran, otros:r.otros_datos || {}, envio,
     lineas: (r.lineas_albaran || r.bultos.flatMap(b => b.contenido.map(x => ({ref:x.ref, desc:x.desc, cant:x.uds}))))
@@ -972,13 +994,13 @@ Para CADA albarán que aparezca extrae TODOS sus datos:
 - pedido_cliente: número de pedido del CLIENTE (El Corte Inglés) que figura en el albarán (su pedido, nº pedido, pedido ECI, order no.). No uses el número del albarán.
 - cliente: nombre del cliente.
 - fecha: fecha del albarán en formato AAAA-MM-DD. Las fechas españolas van día/mes/año.
-- envio: datos del bloque de envío a El Corte Inglés (suele ir como una línea "DATOS ENVIO EL CORTE INGLES"): {"numero_proveedor":"", "departamento":"" (código y nombre, p. ej. "0068 PUERICULTURA"), "lugar_destino":"" (solo el código, p. ej. "0375"), "centro_destino":"" (nombre del centro, p. ej. "C.C.ARROYOMOLINOS CORTE INGLES"), "agencia":"" (nombre de la agencia de transporte), "total_bultos":""}. El "NÚMERO DE PEDIDO" de ese bloque es el pedido_cliente.
+- envio: datos del bloque de envío a El Corte Inglés (suele ir como una línea "DATOS ENVIO EL CORTE INGLES"): {"plataforma":"" (código de 4 cifras con que empieza la dirección del cliente en la cabecera, p. ej. "0050" en "0050-CR ANDALUCIA KM 22.800"), "numero_proveedor":"", "departamento":"" (código y nombre, p. ej. "0068 PUERICULTURA"), "lugar_destino":"" (solo el código, p. ej. "0375"), "centro_destino":"" (nombre del centro, p. ej. "C.C.ARROYOMOLINOS CORTE INGLES"), "agencia":"" (nombre de la agencia de transporte), "total_bultos":""}. El "NÚMERO DE PEDIDO" de ese bloque es el pedido_cliente.
 - otros_datos: objeto con TODOS los demás datos de cabecera y pie que aparezcan, con su etiqueta tal como figura (por ejemplo dirección de entrega, centro o tienda, departamento, código de proveedor, nº de bultos, peso, transportista, forma de pago, observaciones, totales, fecha de entrega). Valores como texto.
 - lineas: cada artículo con ref (NO incluyas la línea "DATOS ENVIO" ni otras líneas que no son artículos) (código del artículo), ean (si aparece), descripcion, cantidad en UNIDADES (número; si viene en cajas y se indican unidades por caja, multiplica) y otros: objeto con el resto de columnas de esa línea (precio, descuento, importe, lote, unidades por caja, etc.).
 - continua_anterior: true si es la continuación de un albarán cuya cabecera no aparece en estas páginas; en ese caso deja numero_albaran como "" si no aparece.
 Si una referencia coincide con una de nuestro maestro (lista abajo, "ref | descripción"), usa exactamente la referencia del maestro.
 No inventes nada: si un dato no aparece, déjalo como "".
-Responde solo con JSON: {"albaranes":[{"numero_albaran":"","pedido_cliente":"","cliente":"","fecha":"","envio":{"numero_proveedor":"","departamento":"","lugar_destino":"","centro_destino":"","agencia":"","total_bultos":""},"otros_datos":{},"lineas":[{"ref":"","ean":"","descripcion":"","cantidad":0,"otros":{}}],"continua_anterior":false}]}
+Responde solo con JSON: {"albaranes":[{"numero_albaran":"","pedido_cliente":"","cliente":"","fecha":"","envio":{"plataforma":"","numero_proveedor":"","departamento":"","lugar_destino":"","centro_destino":"","agencia":"","total_bultos":""},"otros_datos":{},"lineas":[{"ref":"","ean":"","descripcion":"","cantidad":0,"otros":{}}],"continua_anterior":false}]}
 
 Maestro:
 ${refs}
@@ -997,7 +1019,7 @@ function unirAlbaranes(encontrados){
     });
     const otros = x.otros_datos && typeof x.otros_datos === "object" ? x.otros_datos : {};
     const ev = x.envio && typeof x.envio === "object" ? x.envio : {};
-    const envio = {prov:String(ev.numero_proveedor||""), dpto:String(ev.departamento||""), destCod:String(ev.lugar_destino||""),
+    const envio = {plat:String(ev.plataforma||""), prov:String(ev.numero_proveedor||""), dpto:String(ev.departamento||""), destCod:String(ev.lugar_destino||""),
       destino:String(ev.centro_destino||""), agencia:String(ev.agencia||""), bultosAlb:String(ev.total_bultos||"")};
     if (dest){
       dest.envio ||= {};

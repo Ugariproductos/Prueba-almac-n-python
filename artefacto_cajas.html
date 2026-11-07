@@ -718,7 +718,7 @@ function crearPDF(lista){
   return doc;
 }
 /* Una sola hoja A4 por albarán: cabecera y una celda por bulto con su dibujo 3D y su contenido */
-function paginasAlbaran(doc, {res, alb, ped, cli, fecha, envio}){
+function paginasAlbaran(doc, {res, alb, ped, cli, fecha, envio, fuera = []}){
   const M = 10, W = 210 - 2*M, N = res.length, gap = 3;
   doc.setTextColor(20,20,20); doc.setFont("helvetica","bold"); doc.setFontSize(15);
   const dg = destinoGrande(envio);
@@ -743,7 +743,13 @@ function paginasAlbaran(doc, {res, alb, ped, cli, fecha, envio}){
   let lineasEnvio = [];
   if (linEnvio){ doc.setFont("helvetica","bold"); doc.setFontSize(8); doc.setTextColor(20,20,20);
     lineasEnvio = doc.splitTextToSize(linEnvio, W).slice(0, 2); doc.text(lineasEnvio, M, T0+27.3); }
-  const y0 = T0 + 27 + lineasEnvio.length*3.6, yFin = 282;
+  let lineasFuera = [];
+  if (fuera.length){
+    doc.setFont("helvetica","bold"); doc.setFontSize(8.5); doc.setTextColor(178,58,46);
+    lineasFuera = doc.splitTextToSize(`SIN COLOCAR EN CAJAS (no están en el maestro o les faltan medidas): ${fuera.join(", ")}`, W).slice(0, 2);
+    doc.text(lineasFuera, M, T0 + 27.8 + lineasEnvio.length*3.6);
+  }
+  const y0 = T0 + 27 + lineasEnvio.length*3.6 + lineasFuera.length*3.8, yFin = 282;
   const cols = N <= 3 ? 1 : 2, filas = Math.ceil(N/cols);
   const cw = (W - (cols-1)*gap)/cols, ch = (yFin - y0 - (filas-1)*gap)/filas;
   const vertical = ch > 115;                        // celdas altas: dibujo arriba y lista debajo

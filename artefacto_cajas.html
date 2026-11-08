@@ -116,7 +116,7 @@ details .tbl{max-height:280px;overflow-y:auto;margin-top:10px}
 <div class="wrap">
   <header>
     <h1>Cajas por pedido</h1>
-    <p class="note" style="margin:4px 0 0">Sube o pega el albarán. Claude lee las líneas, y la página reparte la mercancía en el menor número de cajas de envío.</p>
+    <p class="note" style="margin:4px 0 0">Sube o pega el albarán. Los PDF de Ugari se leen directamente; las fotos y otros modelos los lee Claude. La página reparte la mercancía en el menor número de cajas de envío.</p>
   </header>
 
   <div class="top">
@@ -961,9 +961,82 @@ async function paginaPDF(pdf, n, escala){
   await page.render({canvasContext: cv.getContext("2d"), viewport: vp}).promise;
   return cv;
 }
+/* Texto de una página en líneas, como se ve: agrupa por altura y ordena de izquierda a derecha.
+   Entre columnas separadas deja dos espacios. */
 async function textoPDF(pdf, n){
   const tc = await (await pdf.getPage(n)).getTextContent();
-  return tc.items.map(it => it.str).join(" ").trim();
+  const filas = [];
+  for (const it of tc.items){
+    if (!it.str.trim()) continue;
+    const y = it.transform[5];
+    let f = filas.find(f => Math.abs(f.y - y) <= 2);
+    if (!f){ f = {y, its: []}; filas.push(f); }
+    f.its.push({x: it.transform[4], s: it.str, w: it.width});
+  }
+  return filas.sort((a,b) => b.y - a.y).map(f => {
+    let out = "", fin = null;
+    for (const it of f.its.sort((a,b) => a.x - b.x)){ if (fin !== null) out += it.x - fin > 3 ? "  " : " "; out += it.s; fin = it.x + it.w; }
+    return out.trim();
+  }).join("\n");
+}
+
+/* Lector directo del albarán de Ugari (PDF con texto, siempre el mismo modelo):
+   cabecera (fecha, nº albarán, plataforma 00XX-..., Centro), líneas (ref, concepto, uds, precio, importe, EAN)
+   y bloque TRANSPORTE del pie (Nº Proveedor, Departamento, Nombre agencia, Nº Pedido, Lugar Destino, Total bultos).
+   Devuelve albaranes en el mismo formato que Claude, o [] si no reconoce el modelo. */
+function leerAlbaranUgari(paginas){
+  const out = [];
+  const val = (txt, re) => (txt.match(re) || [])[1]?.trim() || "";
+  for (const texto of paginas){
+    if (!/ALBARAN\s*N/i.test(texto) || !/REFERENCIA/i.test(texto)) continue;
+    const L = texto.split("\n").map(l => l.trim()).filter(Boolean);
+    const iRef = L.findIndex(l => /^REFERENCIA\b/i.test(l));
+    const iPie = L.findIndex((l, i) => i > iRef && /DIRECCI[ÓO]N DE FACTURACI|^TRANSPORTE\b|IMPORTE\s+IVA/i.test(l));
+    const cab = L.slice(0, iRef).join("\n"), pie = L.slice(iPie < 0 ? L.length : iPie).join("\n");
+    const num = (L.slice(0, iRef).find(l => /^\d{5,8}$/.test(l)) || val(cab, /ALBARAN\s*N[ºo°]?\s*(\d{5,8})/i));
+    const fecha = val(cab, /(\d{2}\/\d{2}\/\d{4})/);
+    const plat = val(cab, /(?:^|\s)(\d{4})-[A-Z]/m);
+    const centro = val(cab, /Centro:\s*(\d+)/i);
+    const cliente = (L.slice(0, iRef).find(l => /CORTE INGL/i.test(l)) || "").replace(/^.*?(EL CORTE INGL[EÉ]S[^,]*?S\.A\.?).*$/i, "$1");
+    const zona = L.slice(0, iRef).find(l => /^[A-ZÁÉÍÓÚÑ .]+$/.test(l) && !/ALBARAN|DELIVERY|FECHA|DATE|C\.I\.F|VAT|CORTE/.test(l)) || "";
+    const cuerpo = L.slice(iRef + 1, iPie < 0 ? L.length : iPie);
+    const pedidoLinea = val(cuerpo.join("\n"), /Pedido\s*n[ºo°]?:?\s*(\d+)/i);
+    const fechaPedido = val(cuerpo.join("\n"), /Pedido\s*n[ºo°]?:?\s*\d+\s+Fecha\s+(\d{2}\/\d{2}\/\d{4})/i);
+    const lineas = []; let ult = null;
+    for (const l of cuerpo){
+      if (/^REFERENCE\b|^Pedido\s*n/i.test(l)) continue;
+      const m = l.match(/^(\S+(?: DATOS)?)\s{2,}(.+?)\s{2,}(\d+)\s{2,}([\d.,]+)\s{2,}([\d.,]+)$/);
+      if (m){
+        ult = /DATOS/i.test(m[1] + m[2]) ? null : {ref:m[1], ean:"", descripcion:m[2], cantidad:parseInt(m[3],10), otros:{Precio:m[4], Importe:m[5]}};
+        if (ult) lineas.push(ult);
+        continue;
+      }
+      const e = l.match(/^EAN:\s*(\d+)/i);
+      if (e && ult){ ult.ean = e[1]; continue; }
+      if (ult && !/:/.test(l) && !ult.ean) ult.descripcion += " " + l;   // concepto en dos líneas
+    }
+    // datos de envío: bloque TRANSPORTE del pie o bloque "DATOS ENVIO" del cuerpo; las etiquetas y sus valores
+    // pueden salir en líneas distintas, así que se buscan también por la forma del valor
+    const T = L.join("\n");
+    const depto = val(T, /DEPARTAMENTO:\s*(\d{4}\s+[A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑ .]*?)(?:\s{2,}|$)/im)
+      || val(pie, /(?:^|\s)(\d{4}\s+[A-ZÁÉÍÓÚÑ]{3,}[A-ZÁÉÍÓÚÑ .]*?)(?:\s{2,}\d{3,4})?\s*$/m);
+    const destTxt = centro || val(T, /LUGAR\s*(?:DE\s*)?DESTINO:\s*(\d+)/i)
+      || val(pie, /\d{4}\s+[A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑ .]*?\s{2,}(\d{3,4})\s*$/m);
+    const iLug = L.findIndex(l => /LUGAR\s*(?:DE\s*)?DESTINO:/i.test(l));
+    const nombreCentro = iLug >= 0 && /CORTE INGL/i.test(L[iLug+1] || "") && !/:/.test(L[iLug+1]) ? L[iLug+1] : "";
+    let agencia = val(T, /NOMBRE\s*AGENCIA:\s*([^:\n]+?)(?:\s{2,}|$)/im);
+    if (/:/.test(agencia) || /^total/i.test(agencia)) agencia = "";
+    out.push({
+      numero_albaran: num, pedido_cliente: val(T, /N(?:[ºo°]|ÚMERO|UMERO)\s*(?:DE\s*)?PEDIDO:\s*(\d+)/i) || pedidoLinea,
+      cliente: cliente || "El Corte Inglés", fecha,
+      envio: {plataforma: plat, numero_proveedor: val(T, /N(?:[ºo°]|ÚMERO|UMERO)\s*(?:DE\s*)?PROVEEDOR:\s*(\d+)/i), departamento: depto,
+        lugar_destino: destTxt, centro_destino: nombreCentro, agencia, total_bultos: val(T, /TOTAL\s*BULTOS:\s*(\d+)/i)},
+      otros_datos: Object.fromEntries([["Fecha del pedido", fechaPedido], ["Provincia de entrega", zona],
+        ["Observaciones", val(pie, /Observaciones:\s*(.+)$/m)], ["Total", val(pie, /(\d[\d.,]*\s*€)\s*$/m)]].filter(([,v]) => v)),
+      lineas, continua_anterior: !num
+    });
+  }
+  return out.filter(a => a.numero_albaran && a.lineas.length);
 }
 function imagenACanvas(file){
   return new Promise((ok, ko) => {
@@ -994,6 +1067,7 @@ const MAX_PAGINAS = 40;
 function promptLectura(desde, hasta, total, conImgs, texto){
   const refs = Object.values(ARTS).slice(0, 400).map(a => `${a.ref} | ${a.desc}`).join("\n");
   return `Eres un operario de almacén. Te paso ${total > 1 ? `las páginas ${desde} a ${hasta} (de ${total}) de un documento` : "un documento"} con uno o varios albaranes de entrega emitidos por Ugari (nuestra empresa) a clientes, normalmente El Corte Inglés${conImgs ? " (imágenes; las páginas altas van partidas en dos trozos con un poco de solape: no dupliques líneas)" : ""}${texto ? " y el texto extraído del PDF" : ""}.
+Modelo de Ugari: en la cabecera, junto a la fecha y el C.I.F., la dirección del cliente empieza con el código de plataforma (p. ej. "0062-PG EL RAIGUER") y debajo "Centro: 0002" (es el lugar de destino). En el pie, el bloque TRANSPORTE trae Nº Proveedor, Departamento, Nombre agencia, Nº Pedido, Lugar Destino y Total bultos (puede venir vacío).
 Un albarán puede ocupar varias páginas, y estas páginas pueden empezar con la continuación de un albarán de páginas anteriores.
 Para CADA albarán que aparezca extrae TODOS sus datos:
 - numero_albaran: número del albarán de Ugari.
@@ -1045,10 +1119,9 @@ async function procesarDocumento(lista){
   if (!files.length){ $("leerEstado").innerHTML = '<span class="err">Solo se pueden cargar PDF o imágenes (JPG, PNG, WebP).</span>'; return; }
   const est = $("leerEstado");
   const sample = await samplePromise;
-  if (!sample){ est.innerHTML = '<span class="err">La lectura automática no está disponible aquí. Escribe las líneas a mano.</span>'; return; }
   try {
     $("thumbs").innerHTML = "";
-    const encontrados = []; let cortado = false;
+    const encontrados = []; let cortado = false, leidosDirecto = 0;
     for (const [fi, file] of files.entries()){
     const pref = files.length > 1 ? `Archivo ${fi+1} de ${files.length} (${file.name}) · ` : "";
     est.textContent = pref + "Preparando el documento…";
@@ -1061,6 +1134,16 @@ async function procesarDocumento(lista){
       const cv = pdf ? await paginaPDF(pdf, n, 0.35) : imagen;
       const im = new Image(); im.src = cv.toDataURL("image/jpeg", .6); im.alt = `Página ${n}`; $("thumbs").appendChild(im);
     }
+
+    // 1) albarán de Ugari con texto: se lee directamente, sin Claude
+    if (pdf){
+      const paginas = [];
+      for (let n = 1; n <= total; n++) paginas.push(await textoPDF(pdf, n));
+      const directos = leerAlbaranUgari(paginas);
+      if (directos.length){ encontrados.push(...directos); leidosDirecto += directos.length; if (pdf.numPages > MAX_PAGINAS) cortado = true; continue; }
+    }
+    // 2) foto o PDF de otro modelo: lo lee Claude
+    if (!sample){ est.innerHTML = '<span class="err">No reconozco el modelo de albarán y la lectura con Claude no está disponible aquí. Escribe las líneas a mano.</span>'; return; }
 
     const lim = await sample.limits().catch(() => null);
     const maxImgs = lim?.images?.maxCount || 0;
@@ -1086,7 +1169,7 @@ async function procesarDocumento(lista){
     ACTIVO = -1; ALBARANES = lista; activar(0);
     const nl = lista.reduce((s,a) => s + a.lineas.length, 0);
     const reg = await registrarAuto(lista);
-    est.innerHTML = reg + `<span class="ok">Leídos ${lista.length} albarán${lista.length>1?"es":""} con ${nl} líneas${files.length > 1 ? ` de ${files.length} archivos` : ""}${cortado ? ` (de los PDF largos solo se leen las primeras ${MAX_PAGINAS} páginas)` : ""}.</span> Revisa los datos antes de guardar.`;
+    est.innerHTML = reg + `<span class="ok">Leídos ${lista.length} albarán${lista.length>1?"es":""} con ${nl} líneas${files.length > 1 ? ` de ${files.length} archivos` : ""}${cortado ? ` (de los PDF largos solo se leen las primeras ${MAX_PAGINAS} páginas)` : ""}.</span>${leidosDirecto ? ` <span class="note">(${leidosDirecto} leído${leidosDirecto>1?"s":""} directamente del PDF de Ugari)</span>` : ""} Revisa los datos antes de guardar.`;
   } catch(e){
     const msg = {not_granted:"No has permitido que la página use Claude. Puedes escribir las líneas a mano.",
       rate_limited:"Demasiadas lecturas seguidas. Espera un poco y vuelve a subirlo.",

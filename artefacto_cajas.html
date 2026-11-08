@@ -67,6 +67,16 @@ tr.bad td{background:var(--warn-bg)}
 .det-b div{border:1px solid var(--line);border-radius:4px;padding:8px;background:var(--panel)}
 .det-b b{display:block;margin-bottom:4px}
 .det-b span{display:block;font-size:.84rem;font-family:var(--mono)}
+.vistas{display:flex;gap:4px;border-bottom:2px solid var(--fg);flex-wrap:wrap}
+.vistas button{background:transparent;color:var(--fg);border:1px solid var(--line);border-bottom:0;border-radius:4px 4px 0 0;padding:9px 16px}
+.vistas button[aria-selected="true"]{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+.vista{display:flex;flex-direction:column;gap:18px}
+.vista[hidden]{display:none}
+table.ed td{padding:3px 4px}
+table.ed input[type=text],table.ed input[type=number]{width:100%;min-width:60px;padding:4px 6px}
+table.ed input.num{max-width:84px;text-align:right;font-family:var(--mono)}
+table.ed tr.sin td{background:var(--warn-bg)}
+.tbl.alta{max-height:65vh;overflow:auto}
 .tabs{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid var(--line)}
 .tab{background:transparent;color:var(--fg);border:1px solid var(--line);font-family:var(--mono);font-size:.85rem;padding:6px 10px}
 .tab.on{background:var(--fg);color:var(--bg);border-color:var(--fg)}
@@ -119,7 +129,13 @@ details .tbl{max-height:280px;overflow-y:auto;margin-top:10px}
     <p class="note" style="margin:4px 0 0">Sube o pega el albarán. Los PDF de Ugari se leen directamente; las fotos y otros modelos los lee Claude. La página reparte la mercancía en el menor número de cajas de envío.</p>
   </header>
 
-  <div class="top">
+  <nav class="vistas" role="tablist" aria-label="Secciones">
+    <button role="tab" data-vista="pedidos" aria-selected="true">Pedidos</button>
+    <button role="tab" data-vista="maestro" aria-selected="false">Maestro de artículos</button>
+    <button role="tab" data-vista="cajas" aria-selected="false">Cajas de envío</button>
+  </nav>
+
+  <div id="v-pedidos" class="vista">
     <section>
       <h2>1 · Albarán</h2>
       <div class="drop" id="drop" tabindex="0" role="button" aria-label="Subir albarán">
@@ -130,17 +146,8 @@ details .tbl{max-height:280px;overflow-y:auto;margin-top:10px}
       </div>
       <div class="thumbs" id="thumbs"></div>
       <p id="leerEstado" class="note" style="margin:10px 0 0"></p>
+      <p class="note" style="margin:6px 0 0">Maestro: <span id="origen2"></span></p>
     </section>
-    <section>
-      <h2>Maestro de artículos y cajas</h2>
-      <div class="row">
-        <label class="file" for="xls">Cargar Excel<input type="file" id="xls" accept=".xlsx,.xls"></label>
-        <span class="note" id="origen"></span>
-      </div>
-      <p class="note">Hoja de artículos: Referencia, Descripción, Largo, Ancho, Alto (cm de la caja del artículo), Uds por caja y, si las tienes, Largo ud, Ancho ud, Alto ud (medidas de una unidad; si faltan se estiman). Hoja de cajas: Caja, Largo, Ancho, Alto y "Solo si no cabe" (sí en las cajas que solo se usan cuando no hay otra opción; si falta la columna, se aplica a XL). Para ampliar productos, añade filas y vuelve a cargarlo. Se recuerda en este navegador.</p>
-      
-    </section>
-  </div>
 
   <section>
     <h2>2 · Datos del albarán</h2>
@@ -180,13 +187,35 @@ details .tbl{max-height:280px;overflow-y:auto;margin-top:10px}
     <div class="tbl"><table id="tReg"></table></div>
   </section>
 
-  <section>
-    <details>
-      <summary>Ver maestro cargado</summary>
-      <div class="tbl"><table id="tCajas"></table></div>
-      <div class="tbl"><table id="tArt"></table></div>
-    </details>
-  </section>
+  </div>
+
+  <div id="v-maestro" class="vista" hidden>
+    <section>
+      <h2>Maestro de artículos</h2>
+      <div class="row barra-ed">
+        <label class="file" for="xls">Cargar desde Excel<input type="file" id="xls" accept=".xlsx,.xls"></label>
+        <button class="ghost" id="mAdd">Añadir artículo</button>
+        <input id="mBuscar" type="search" placeholder="Buscar referencia, EAN o descripción" aria-label="Buscar artículo" style="flex:1 1 220px">
+        <button id="mGuardar">Guardar cambios</button>
+        <span id="mEstado" class="note"></span>
+      </div>
+      <p class="note">Medidas en cm de la <b>caja del artículo</b> y unidades que trae esa caja: se colocan cajas completas y, si sobran, unidades sueltas. Las medidas de una unidad son opcionales (si faltan se estiman). Las filas en naranja no tienen medidas y no se pueden meter en cajas. <span id="origen"></span></p>
+      <div class="tbl alta"><table id="tArt" class="ed"></table></div>
+    </section>
+  </div>
+
+  <div id="v-cajas" class="vista" hidden>
+    <section>
+      <h2>Cajas de envío</h2>
+      <div class="row barra-ed">
+        <button class="ghost" id="cAdd">Añadir caja</button>
+        <button id="cGuardar">Guardar cambios</button>
+        <span id="cEstado" class="note"></span>
+      </div>
+      <p class="note">Medidas interiores en cm. Marca «Solo si no cabe» en las cajas que solo se usan cuando la mercancía no entra en otra (por ejemplo XL).</p>
+      <div class="tbl"><table id="tCajas" class="ed"></table></div>
+    </section>
+  </div>
 </div>
 
 <datalist id="refsList"></datalist>
@@ -300,13 +329,109 @@ function leerLibro(wb){
   if (!cajas.length) cajas.push(...(CAJAS.length ? CAJAS.map(c => [c.nombre, c.l, c.a, c.h, c.soloSiNoCabe]) : EJEMPLO.cajas));
   return {arts, cajas};
 }
+/* ---------- pestañas: maestro de artículos y cajas de envío, editables ---------- */
+let ED_ARTS = [], ED_CAJAS = [], NOMBRE_MAESTRO = "";
+const artObj = ([ref, desc, l, a, h, uds, ul, ua, uh, ean]) => ({ref, desc:desc||"", ean:ean||"", l, a, h, uds, ul, ua, uh});
+const artTupla = o => [String(o.ref).trim(), o.desc||"", num(o.l), num(o.a), num(o.h), num(o.uds)||1, num(o.ul), num(o.ua), num(o.uh), String(o.ean||"").trim()];
+const cajaObj = ([nombre, l, a, h, solo]) => ({nombre, l, a, h, solo: !!solo});
+const cajaTupla = o => [String(o.nombre).trim(), num(o.l), num(o.a), num(o.h), !!o.solo];
+function ponerOrigen(texto, error = false){
+  for (const id of ["origen", "origen2"]){ $(id).textContent = texto; $(id).className = error ? "err" : ""; }
+}
 function pintarMaestro(){
-  $("tCajas").innerHTML = "<tr><th>Caja de envío</th><th>Medidas (cm)</th><th>Volumen (cm³)</th></tr>" +
-    [...CAJAS].sort((a,b)=>a.vol-b.vol).map(c=>`<tr><td>${esc(c.nombre)}</td><td class="n">${c.l} × ${c.a} × ${c.h}</td><td class="n">${fmt(c.vol)}</td></tr>`).join("");
-  $("tArt").innerHTML = "<tr><th>Ref.</th><th>Descripción</th><th>Caja art. (cm)</th><th>Uds</th><th>Unidad (cm)</th></tr>" +
-    Object.values(ARTS).map(a=>`<tr><td>${esc(a.ref)}</td><td>${esc(a.desc)}</td><td class="n">${a.sinMedidas ? "—" : `${cm(a.l)} × ${cm(a.a)} × ${cm(a.h)}`}</td><td class="n">${a.uds}</td><td class="n">${a.sinMedidas ? '<span class="err">Faltan medidas</span>' : a.u.map(cm).join(" × ") + (a.ul&&a.ua&&a.uh ? "" : " (estimada)")}</td></tr>`).join("");
+  ED_ARTS = Object.values(ARTS).map(a => ({ref:a.ref, desc:a.desc.startsWith("EAN ") && a.ean ? "" : a.desc, ean:a.ean, l:a.l, a:a.a, h:a.h, uds:a.uds, ul:a.ul, ua:a.ua, uh:a.uh}));
+  ED_CAJAS = CAJAS.map(c => ({nombre:c.nombre, l:c.l, a:c.a, h:c.h, solo:c.soloSiNoCabe}));
+  pintarTablaArts(); pintarTablaCajas();
   $("refsList").innerHTML = Object.values(ARTS).map(a=>`<option value="${esc(a.ref)}">${esc(a.desc)}</option>`).join("");
 }
+const vNum = v => v == null || v === "" ? "" : (Math.round(v*10)/10);
+function pintarTablaArts(){
+  const q = norm($("mBuscar").value), MAX = 400;
+  const filas = ED_ARTS.map((o, i) => [o, i]).filter(([o]) => !q || norm(`${o.ref} ${o.ean} ${o.desc}`).includes(q));
+  $("tArt").innerHTML = `<tr><th>Referencia</th><th>EAN</th><th>Descripción</th><th>Largo caja</th><th>Ancho caja</th><th>Alto caja</th><th>Uds por caja</th><th>Largo ud</th><th>Ancho ud</th><th>Alto ud</th><th></th></tr>` +
+    filas.slice(0, MAX).map(([o, i]) => {
+      const sin = !(num(o.l) > 0 && num(o.a) > 0 && num(o.h) > 0);
+      const inp = (k, cls = "num", tipo = "number") => `<input type="${tipo}" class="${cls}" data-i="${i}" data-k="${k}" id="ma${i}_${k}" value="${esc(tipo === "number" ? vNum(o[k]) : (o[k] ?? ""))}" ${tipo === "number" ? 'step="0.1" min="0"' : ""} aria-label="${k}">`;
+      return `<tr class="${sin ? "sin" : ""}"><td>${inp("ref","","text")}</td><td>${inp("ean","","text")}</td><td>${inp("desc","","text")}</td>
+        <td>${inp("l")}</td><td>${inp("a")}</td><td>${inp("h")}</td><td>${inp("uds")}</td><td>${inp("ul")}</td><td>${inp("ua")}</td><td>${inp("uh")}</td>
+        <td><button class="x" data-del="${i}" aria-label="Borrar artículo">✕</button></td></tr>`;
+    }).join("") + (filas.length > MAX ? `<tr><td colspan="11" class="note">Mostrando ${MAX} de ${filas.length}. Usa el buscador para ver el resto.</td></tr>` : "");
+}
+function pintarTablaCajas(){
+  $("tCajas").innerHTML = `<tr><th>Caja</th><th>Largo (cm)</th><th>Ancho (cm)</th><th>Alto (cm)</th><th>Solo si no cabe</th><th>Volumen (cm³)</th><th></th></tr>` +
+    ED_CAJAS.map((o, i) => `<tr><td><input type="text" data-i="${i}" data-k="nombre" id="cj${i}_n" value="${esc(o.nombre)}" aria-label="Nombre"></td>
+      ${["l","a","h"].map(k => `<td><input type="number" class="num" step="0.1" min="0" data-i="${i}" data-k="${k}" id="cj${i}_${k}" value="${vNum(o[k])}" aria-label="${k}"></td>`).join("")}
+      <td><input type="checkbox" data-i="${i}" data-k="solo" id="cj${i}_s" ${o.solo ? "checked" : ""} aria-label="Solo si no cabe"></td>
+      <td class="n">${num(o.l)*num(o.a)*num(o.h) ? fmt(num(o.l)*num(o.a)*num(o.h)) : "—"}</td>
+      <td><button class="x" data-del="${i}" aria-label="Borrar caja">✕</button></td></tr>`).join("");
+}
+$("tArt").addEventListener("change", e => {
+  const t = e.target, i = +t.dataset.i; if (isNaN(i)) return;
+  ED_ARTS[i][t.dataset.k] = t.type === "number" ? num(t.value) : t.value.trim();
+  $("mEstado").innerHTML = '<span class="err">Cambios sin guardar.</span>';
+  if (["l","a","h"].includes(t.dataset.k)) t.closest("tr").classList.toggle("sin", !(num(ED_ARTS[i].l) > 0 && num(ED_ARTS[i].a) > 0 && num(ED_ARTS[i].h) > 0));
+});
+$("tArt").addEventListener("click", e => {
+  const d = e.target.dataset.del; if (d === undefined) return;
+  ED_ARTS.splice(+d, 1); pintarTablaArts(); $("mEstado").innerHTML = '<span class="err">Cambios sin guardar.</span>';
+});
+$("mBuscar").addEventListener("input", pintarTablaArts);
+$("mAdd").onclick = () => {
+  ED_ARTS.unshift({ref:"", desc:"", ean:"", l:null, a:null, h:null, uds:1, ul:null, ua:null, uh:null});
+  $("mBuscar").value = ""; pintarTablaArts(); $("ma0_ref").focus();
+};
+$("tCajas").addEventListener("change", e => {
+  const t = e.target, i = +t.dataset.i; if (isNaN(i)) return;
+  ED_CAJAS[i][t.dataset.k] = t.type === "checkbox" ? t.checked : t.type === "number" ? num(t.value) : t.value.trim();
+  $("cEstado").innerHTML = '<span class="err">Cambios sin guardar.</span>';
+});
+$("tCajas").addEventListener("click", e => {
+  const d = e.target.dataset.del; if (d === undefined) return;
+  ED_CAJAS.splice(+d, 1); pintarTablaCajas(); $("cEstado").innerHTML = '<span class="err">Cambios sin guardar.</span>';
+});
+$("cAdd").onclick = () => { ED_CAJAS.push({nombre:"", l:null, a:null, h:null, solo:false}); pintarTablaCajas(); $(`cj${ED_CAJAS.length-1}_n`).focus(); };
+
+function aplicarMaestro(arts, cajas, nombre){
+  cargarMaestro(arts, cajas);
+  NOMBRE_MAESTRO = nombre || NOMBRE_MAESTRO || "Maestro";
+  ponerOrigen(textoOrigen(NOMBRE_MAESTRO));
+  pintarLineas(); if (LINEAS.length) calcular();
+}
+/* Se guarda en el registro compartido del artefacto (si está disponible) y en este navegador */
+async function persistirMaestro(){
+  const arts = Object.values(ARTS).map(a => artObj([a.ref, a.desc.startsWith("EAN ") && a.ean ? "" : a.desc, a.l, a.a, a.h, a.uds, a.ul, a.ua, a.uh, a.ean]));
+  const cajas = CAJAS.map(c => ({nombre:c.nombre, l:c.l, a:c.a, h:c.h, solo:!!c.soloSiNoCabe}));
+  try { localStorage.setItem("maestro", JSON.stringify({nombre:NOMBRE_MAESTRO, arts:arts.map(artTupla), cajas:cajas.map(cajaTupla)})); } catch(_){}
+  if (!DB) return "en este navegador";
+  await DB.collection("config").doc("maestro").set({nombre:NOMBRE_MAESTRO, actualizado:new Date().toISOString(), articulos:arts});
+  await DB.collection("config").doc("cajas").set({actualizado:new Date().toISOString(), cajas});
+  return "en el registro compartido";
+}
+$("mGuardar").onclick = async () => {
+  const est = $("mEstado"), refs = new Set(), dup = [];
+  const filas = ED_ARTS.filter(o => String(o.ref || "").trim());
+  for (const o of filas){ const r = String(o.ref).trim(); if (refs.has(r)) dup.push(r); refs.add(r); }
+  if (dup.length){ est.innerHTML = `<span class="err">Referencias repetidas: ${esc(dup.join(", "))}</span>`; return; }
+  aplicarMaestro(filas.map(artTupla), CAJAS.map(c => [c.nombre, c.l, c.a, c.h, c.soloSiNoCabe]), NOMBRE_MAESTRO);
+  try { est.innerHTML = `<span class="ok">Guardado ${await persistirMaestro()}: ${filas.length} artículos.</span>`; }
+  catch(e){ est.innerHTML = `<span class="err">Guardado solo en este navegador (${esc(e.code||"error")}).</span>`; }
+};
+$("cGuardar").onclick = async () => {
+  const est = $("cEstado"), filas = ED_CAJAS.filter(o => String(o.nombre || "").trim());
+  const mal = filas.filter(o => !(num(o.l) > 0 && num(o.a) > 0 && num(o.h) > 0)).map(o => o.nombre);
+  if (!filas.length){ est.innerHTML = '<span class="err">Tiene que haber al menos una caja.</span>'; return; }
+  if (mal.length){ est.innerHTML = `<span class="err">Faltan medidas en: ${esc(mal.join(", "))}</span>`; return; }
+  const arts = Object.values(ARTS).map(a => [a.ref, a.desc.startsWith("EAN ") && a.ean ? "" : a.desc, a.l, a.a, a.h, a.uds, a.ul, a.ua, a.uh, a.ean]);
+  aplicarMaestro(arts, filas.map(cajaTupla), NOMBRE_MAESTRO);
+  try { est.innerHTML = `<span class="ok">Guardado ${await persistirMaestro()}: ${filas.length} cajas.</span>`; }
+  catch(e){ est.innerHTML = `<span class="err">Guardado solo en este navegador (${esc(e.code||"error")}).</span>`; }
+};
+/* pestañas */
+document.querySelector(".vistas").addEventListener("click", e => {
+  const v = e.target.dataset.vista; if (!v) return;
+  document.querySelectorAll(".vistas button").forEach(b => b.setAttribute("aria-selected", String(b.dataset.vista === v)));
+  for (const id of ["pedidos","maestro","cajas"]) $("v-"+id).hidden = id !== v;
+});
 
 /* ---------- líneas del albarán ---------- */
 function pintarLineas(){
@@ -897,6 +1022,13 @@ async function iniciarRegistro(){
   DB = window.claude?.use ? await window.claude.use("db") : null;
   if (!DB){ est.textContent = "El registro no está disponible en esta vista."; $("tReg").innerHTML = ""; if ($("saveBtn")) $("saveBtn").hidden = true; return; }
   if ($("saveBtn")) $("saveBtn").hidden = false;
+  try {
+    const [m, c] = await Promise.all([DB.collection("config").doc("maestro").get(), DB.collection("config").doc("cajas").get()]);
+    if (m.exists && m.data().articulos?.length){
+      const cajas = c.exists && c.data().cajas?.length ? c.data().cajas.map(cajaTupla) : CAJAS.map(x => [x.nombre, x.l, x.a, x.h, x.soloSiNoCabe]);
+      aplicarMaestro(m.data().articulos.map(artTupla), cajas, m.data().nombre);
+    }
+  } catch(_){}
   const t = setTimeout(() => { est.textContent = "El registro tarda en responder…"; }, 10000);
   DB.collection("envios").orderBy("fecha_albaran", "desc").onSnapshot(snap => {
     clearTimeout(t);
@@ -1307,11 +1439,9 @@ $("xls").addEventListener("change", async ev => {
   const f = ev.target.files[0]; if (!f) return;
   try {
     const {arts, cajas} = leerLibro(XLSX.read(await f.arrayBuffer(), {type:"array"}));
-    cargarMaestro(arts, cajas);
-    try { localStorage.setItem("maestro", JSON.stringify({nombre:f.name, arts, cajas})); } catch(_){}
-    $("origen").className = "note"; $("origen").textContent = textoOrigen(f.name);
-    pintarLineas(); if (LINEAS.length) calcular();
-  } catch(e){ $("origen").className = "err"; $("origen").textContent = e.message; }
+    aplicarMaestro(arts, cajas, f.name);
+    $("mEstado").innerHTML = `<span class="ok">Cargado ${esc(f.name)} y guardado ${await persistirMaestro().catch(() => "en este navegador")}.</span>`;
+  } catch(e){ ponerOrigen(e.message, true); }
   ev.target.value = "";
 });
 
@@ -1320,12 +1450,13 @@ let guardado = null;
 try { guardado = JSON.parse(localStorage.getItem("maestro") || "null"); } catch(_){}
 if (guardado?.arts?.length && guardado?.cajas?.length){
   cargarMaestro(guardado.arts, guardado.cajas);
-  $("origen").textContent = textoOrigen(guardado.nombre);
+  NOMBRE_MAESTRO = guardado.nombre || "Maestro";
+  ponerOrigen(textoOrigen(NOMBRE_MAESTRO));
   ALBARANES = [{alb:"", ped:"", cli:"El Corte Inglés", fecha:"", otros:{}, lineas:[]}]; activar(0, false);
   $("out").innerHTML = '<p class="note">Sube o pega un albarán para ver los bultos.</p>';
 } else {
   cargarMaestro(EJEMPLO.arts, EJEMPLO.cajas);
-  $("origen").textContent = "Datos de EJEMPLO (carga tu Excel)";
+  ponerOrigen("Datos de EJEMPLO (carga tu Excel en la pestaña Maestro de artículos)");
   ALBARANES = [{alb:EJEMPLO.doc.albaran, ped:EJEMPLO.doc.pedido, cli:EJEMPLO.doc.proveedor, fecha:"", otros:{},
     lineas: EJEMPLO.lineas.map(([ref,desc,cant]) => ({ref, desc, cant}))}];
   activar(0);

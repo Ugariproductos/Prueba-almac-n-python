@@ -67,6 +67,26 @@ def dims_unidad(l, a, h, uds):
     return d
 
 
+def crear_articulo(ref, desc="", ean="", l=None, a=None, h=None, uds=1, ul=None, ua=None, uh=None):
+    """Artículo del maestro: medidas en cm de su caja, uds por caja y, opcional, medidas de una unidad."""
+    uds = int(round(uds or 1)) or 1
+    sin = not (l and a and h)
+    ud = [ul, ua, uh]
+    return {
+        "ref": str(ref).strip(), "ean": str(ean or "").strip(), "desc": desc or (f"EAN {ean}" if ean else ""),
+        "desc_original": desc or "", "l": l, "a": a, "h": h, "ud": ud,
+        "sin_medidas": sin,
+        "uds": uds,
+        "caja": None if sin else [l, a, h],
+        "vol_ud": 0 if sin else l * a * h / uds,
+        "u": None if sin else (ud if all(ud) else dims_unidad(l, a, h, uds)),
+    }
+
+
+def crear_caja(nombre, l, a, h, solo=False):
+    return {"nombre": str(nombre).strip(), "l": l, "a": a, "h": h, "vol": l * a * h, "solo_si_no_cabe": bool(solo)}
+
+
 CAJAS_UGARI = [  # se usan si el Excel no trae hoja de cajas
     {"nombre": "S", "l": 35, "a": 30, "h": 30, "vol": 35 * 30 * 30, "solo_si_no_cabe": False},
     {"nombre": "M", "l": 40, "a": 30, "h": 30, "vol": 40 * 30 * 30, "solo_si_no_cabe": False},
@@ -111,16 +131,8 @@ def leer_excel(ruta=EXCEL, cajas_por_defecto=None):
                 uds = (_num(f[i_uds]) if i_uds is not None else 1) or 1
                 ean = str(f[i_ean]).strip() if i_ean is not None and f[i_ean] not in (None, "") else ""
                 desc = str(f[i_desc] or "") if i_desc is not None else ""
-                sin = not (l and a and h)
                 ud = [med(f, i) for i in (u_l, u_a, u_h)]
-                articulos[ref] = {
-                    "ref": ref, "ean": ean, "desc": desc or (f"EAN {ean}" if ean else ""),
-                    "sin_medidas": sin,
-                    "uds": int(round(uds)) or 1,
-                    "caja": None if sin else [l, a, h],
-                    "vol_ud": 0 if sin else l * a * h / uds,
-                    "u": None if sin else (ud if all(ud) else dims_unidad(l, a, h, uds)),
-                }
+                articulos[ref] = crear_articulo(ref, desc, ean, l, a, h, uds, *ud)
         else:  # hoja de cajas de envío
             i_nom = _col(cab, "caja", "nombre", "tipo")
             if i_nom is None:

@@ -241,8 +241,49 @@ def _llenar(caja, items, huecos_grandes_primero=False):
     return capas, puestos
 
 
+def _llenar_puntos(caja, items):
+    """Colocación pieza a pieza: cada pieza en el hueco libre más bajo, más al frente y más a la
+    izquierda, en cualquiera de sus 6 posiciones (primero la más baja), apoyada en el suelo o en
+    otra pieza. Rellena antes los huecos del fondo."""
+    L, A, H = caja["l"], caja["a"], caja["h"]
+    puestas, capas, puestos = [], [], {}
+    puntos = [(0.0, 0.0, 0.0)]
+
+    def choca(x, y, z, dx, dy, dz):
+        return any(x < b[3] - EPS and b[0] < x + dx - EPS and y < b[4] - EPS and b[1] < y + dy - EPS
+                   and z < b[5] - EPS and b[2] < z + dz - EPS for b in puestas)
+
+    def apoya(x, y, z, dx, dy):
+        return z < EPS or any(abs(b[5] - z) < EPS and x < b[3] - EPS and b[0] < x + dx - EPS
+                              and y < b[4] - EPS and b[1] < y + dy - EPS for b in puestas)
+
+    for ref, q, u in items:
+        oris = sorted(_orientaciones(u), key=lambda o: (o[2], -o[0] * o[1]))
+        for _ in range(q):
+            puntos.sort(key=lambda p: (p[2], p[1], p[0]))
+            hecho = None
+            for x, y, z in puntos:
+                for dx, dy, dz in oris:
+                    if (x + dx <= L + EPS and y + dy <= A + EPS and z + dz <= H + EPS
+                            and apoya(x, y, z, dx, dy) and not choca(x, y, z, dx, dy, dz)):
+                        hecho = (x, y, z, dx, dy, dz)
+                        break
+                if hecho:
+                    break
+            if not hecho:
+                break
+            x, y, z, dx, dy, dz = hecho
+            puestas.append((x, y, z, x + dx, y + dy, z + dz))
+            capas.append({"ref": ref, "x0": x, "y0": y, "z": z, "o": (dx, dy, dz), "nx": 1, "ny": 1, "per": 1,
+                          "k": 1, "niveles": 1, "usado": dz, "pieza": True})
+            puestos[ref] = puestos.get(ref, 0) + 1
+            puntos.remove((x, y, z))
+            puntos += [(x + dx, y, z), (x, y + dy, z), (x, y, z + dz)]
+    return capas, puestos
+
+
 def _llenar_mejor(caja, items):
-    """Prueba varios órdenes de colocación y se queda con el que mete más volumen."""
+    """Prueba varios órdenes y los dos métodos (por capas y pieza a pieza); se queda con el que mete más volumen."""
     vol = lambda it: it[2][0] * it[2][1] * it[2][2]
     ordenes = [
         list(items),
@@ -251,9 +292,12 @@ def _llenar_mejor(caja, items):
         sorted(items, key=lambda it: -vol(it) * it[1]),
         sorted(items, key=lambda it: vol(it)),
     ]
+    intentos = [(lambda o=o, g=g: _llenar(caja, o, g)) for g in (False, True) for o in ordenes]
+    intentos += [lambda: _llenar_puntos(caja, sorted(items, key=lambda it: -vol(it))),
+                 lambda: _llenar_puntos(caja, sorted(items, key=lambda it: -max(it[2])))]
     mejor = None
-    for orden, grandes in [(o, g) for g in (False, True) for o in ordenes]:
-        capas, puestos = _llenar(caja, orden, grandes)
+    for intento in intentos:
+        capas, puestos = intento()
         v = sum(puestos[r] * vol(it) for it in items for r in [it[0]] if r in puestos)
         if mejor is None or v > mejor[0] + EPS or (abs(v - mejor[0]) <= EPS and len(capas) < len(mejor[1])):
             mejor = (v, capas, puestos)
@@ -411,6 +455,15 @@ def _ordenar(capas, puestos):
 
 
 def colocacion(bulto, ref):
+    mias = [k for k in bulto["capas"] if k["ref"] == ref]
+    if mias and all(k.get("pieza") for k in mias):
+        por_altura = {}
+        for k in mias:
+            z = round(k["z"], 1)
+            por_altura[z] = por_altura.get(z, 0) + 1
+        nombre = (lambda n: "caja" if n == 1 else "cajas") if es_caja(ref) else (lambda n: "ud" if n == 1 else "uds")
+        return " · ".join(f"{n} {nombre(n)} " + ("en el fondo" if z == 0 else f"a {_cm(z)} cm del fondo")
+                          for z, n in sorted(por_altura.items()))
     partes = []
     for k in bulto["capas"]:
         if k["ref"] != ref:

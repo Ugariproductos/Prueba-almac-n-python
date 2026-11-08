@@ -412,15 +412,49 @@ function llenar(tipo, items, grandesPrimero = false){
   }
   return {capas, puestos};
 }
-/* Prueba varios órdenes de colocación y se queda con el que mete más volumen */
+/* Colocación pieza a pieza: cada caja (o unidad) en el hueco libre más bajo, más al frente y más a la
+   izquierda, en cualquiera de sus 6 posiciones (primero la más baja). Así se rellenan antes los
+   huecos del fondo. Cada pieza debe apoyar en el suelo o sobre otra pieza. */
+function llenarPuntos(tipo, items){
+  const L = tipo.l, A = tipo.a, H = tipo.h, cajas = [], capas = [], puestos = {};
+  let puntos = [[0,0,0]];
+  const choca = (x,y,z,dx,dy,dz) => cajas.some(b => x < b[3]-EPS && b[0] < x+dx-EPS && y < b[4]-EPS && b[1] < y+dy-EPS && z < b[5]-EPS && b[2] < z+dz-EPS);
+  const apoya = (x,y,z,dx,dy) => z < EPS || cajas.some(b => Math.abs(b[5]-z) < EPS && x < b[3]-EPS && b[0] < x+dx-EPS && y < b[4]-EPS && b[1] < y+dy-EPS);
+  for (const it of items){
+    const oris = orientaciones(it.u).sort((a,b) => (a[2]-b[2]) || (b[0]*b[1] - a[0]*a[1]));
+    for (let i = 0; i < it.q; i++){
+      puntos.sort((a,b) => (a[2]-b[2]) || (a[1]-b[1]) || (a[0]-b[0]));
+      let hecho = null;
+      for (const [x,y,z] of puntos){
+        for (const [dx,dy,dz] of oris){
+          if (x+dx > L+EPS || y+dy > A+EPS || z+dz > H+EPS || !apoya(x,y,z,dx,dy) || choca(x,y,z,dx,dy,dz)) continue;
+          hecho = [x,y,z,dx,dy,dz]; break;
+        }
+        if (hecho) break;
+      }
+      if (!hecho) break;
+      const [x,y,z,dx,dy,dz] = hecho;
+      cajas.push([x,y,z,x+dx,y+dy,z+dz]);
+      capas.push({ref:it.ref, x0:x, y0:y, z, o:[dx,dy,dz], nx:1, ny:1, per:1, k:1, niveles:1, usado:dz, pieza:true});
+      puestos[it.ref] = (puestos[it.ref]||0) + 1;
+      puntos = puntos.filter(p => !(p[0] === x && p[1] === y && p[2] === z));
+      puntos.push([x+dx,y,z], [x,y+dy,z], [x,y,z+dz]);
+    }
+  }
+  return {capas, puestos};
+}
+/* Prueba varios órdenes y los dos métodos (por capas y pieza a pieza); se queda con el que mete más volumen */
 function llenarMejor(tipo, items){
   const v = it => it.u[0]*it.u[1]*it.u[2];
   const ordenes = [items, [...items].sort((a,b) => Math.max(...b.u) - Math.max(...a.u)),
     [...items].sort((a,b) => Math.min(...b.u) - Math.min(...a.u)),
     [...items].sort((a,b) => v(b)*b.q - v(a)*a.q), [...items].sort((a,b) => v(a) - v(b))];
   let mejor = null;
-  for (const g of [false, true]) for (const o of ordenes){
-    const r = llenar(tipo, o, g);
+  const intentos = [...[false, true].flatMap(g => ordenes.map(o => () => llenar(tipo, o, g))),
+    () => llenarPuntos(tipo, [...items].sort((a,b) => v(b) - v(a))),
+    () => llenarPuntos(tipo, [...items].sort((a,b) => Math.max(...b.u) - Math.max(...a.u)))];
+  for (const intento of intentos){
+    const r = intento();
     const vol = items.reduce((s,it) => s + (r.puestos[it.ref]||0)*v(it), 0);
     if (!mejor || vol > mejor.vol + EPS || (Math.abs(vol - mejor.vol) <= EPS && r.capas.length < mejor.r.capas.length)) mejor = {vol, r};
     if (items.every(it => r.puestos[it.ref] === it.q)) return r;
@@ -494,7 +528,15 @@ function ordenRefs(c){
 }
 const contenidoOrdenado = c => ordenRefs(c).map(r => [r, c.contenido[r]]);
 function colocacion(c, ref){
-  return c.capas.filter(k => k.ref === ref).map(k => {
+  const mias = c.capas.filter(k => k.ref === ref);
+  if (mias.length && mias.every(k => k.pieza)){
+    const porAltura = {};
+    for (const k of mias){ const z = Math.round(k.z*10)/10; porAltura[z] = (porAltura[z]||0) + 1; }
+    const nombre = n => esCaja(ref) ? (n === 1 ? "caja" : "cajas") : (n === 1 ? "ud" : "uds");
+    return Object.entries(porAltura).sort((a,b) => a[0]-b[0])
+      .map(([z,n]) => `${n} ${nombre(n)} ${+z === 0 ? "en el fondo" : `a ${cm(+z)} cm del fondo`}`).join(" · ");
+  }
+  return mias.map(k => {
     const llenos = Math.floor(k.k / k.per), resto = k.k % k.per;
     let t = llenos ? `${llenos} altura${llenos>1?"s":""} de ${k.nx}×${k.ny}` : "";
     const pieza = esCaja(ref) ? (resto === 1 ? "caja" : "cajas") : (resto === 1 ? "ud" : "uds");

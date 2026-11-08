@@ -215,8 +215,35 @@ const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;
 const norm = s => String(s ?? "").toUpperCase().replace(/[\s.\-_/]/g, "");
 
 /* ---------- maestro ---------- */
+/* Lo que se coloca: cajas completas del artículo (con las medidas de la caja del Excel) y,
+   si la cantidad no es múltiplo de las uds por caja, las unidades sueltas que sobran.
+   Claves internas: "REF|C" = caja del artículo, "REF|U" = unidad suelta. */
+let VIRT = {}; const UDS_EXTRA = {};
+const baseRef = k => String(k).split("|")[0];
+const esCaja = k => String(k).endsWith("|C");
+const udsPorCaja = ref => ARTS[baseRef(ref)]?.uds || UDS_EXTRA[baseRef(ref)] || 1;
+const unidadesDe = (k, n) => esCaja(k) ? n * udsPorCaja(k) : n;
+function presentacion(k, n){
+  const uds = udsPorCaja(k);
+  if (!String(k).includes("|")) return `${n} uds`;
+  return esCaja(k) ? (uds > 1 ? `${n} caja${n>1?"s":""} de ${uds} uds` : `${n} ud${n>1?"s":""}`) : `${n} ud${n>1?"s":""} suelta${n>1?"s":""}`;
+}
+function artDe(k){
+  if (ARTS[k]) return ARTS[k];
+  if (!VIRT[k]){
+    const a = ARTS[baseRef(k)];
+    VIRT[k] = esCaja(k) ? {...a, ref:k, u:[a.l, a.a, a.h], vol_ud:a.l*a.a*a.h} : {...a, ref:k};
+  }
+  return VIRT[k];
+}
+function partirEnCajas(ref, q){
+  const uds = Math.max(1, Math.round(ARTS[ref].uds || 1)), c = Math.floor(q/uds), r = q % uds, out = [];
+  if (c) out.push([`${ref}|C`, c]);
+  if (r) out.push([`${ref}|U`, r]);
+  return out;
+}
 function cargarMaestro(arts, cajas){
-  ARTS = {}; CAJAS = [];
+  ARTS = {}; CAJAS = []; VIRT = {};
   for (const [ref, desc, l, a, h, uds, ul, ua, uh, ean] of arts){
     const sinMedidas = !(l > 0 && a > 0 && h > 0);
     ARTS[ref] = {ref, desc: desc || (ean ? `EAN ${ean}` : ""), ean: ean ? String(ean) : "", l, a, h, uds:uds||1, ul, ua, uh,
@@ -311,6 +338,7 @@ $("add").onclick = () => { LINEAS.push({ref:"",desc:"",cant:1}); pintarLineas();
 
 const ORDEN_COLOR = {};
 function colorDe(ref){
+  ref = baseRef(ref);
   if (!(ref in ORDEN_COLOR)) ORDEN_COLOR[ref] = Object.keys(ORDEN_COLOR).length;
   return COLORES[ORDEN_COLOR[ref] % COLORES.length];
 }
@@ -406,10 +434,11 @@ function empaquetar(pedido){
   const tipos = [...CAJAS].sort((a,b)=>a.vol-b.vol), mayor = tipos[tipos.length-1];
   let normales = tipos.filter(t => !t.soloSiNoCabe); if (!normales.length) normales = tipos;
   const principal = normales[normales.length-1];
-  const items = pedido.map(([ref,q]) => ({ref, q, u:ARTS[ref].u, vol:ARTS[ref].vol_ud})).sort((a,b)=>b.vol-a.vol);
+  const items = pedido.flatMap(([ref,q]) => partirEnCajas(ref, q)).map(([k,q]) => ({ref:k, q, u:artDe(k).u, vol:artDe(k).vol_ud}))
+    .sort((a,b)=>b.vol-a.vol);
   for (const it of items)
     if (!cabeEn(it.u, mayor))
-      throw new Error(`${it.ref}: una unidad (${it.u.map(cm).join(" × ")} cm) no cabe ni en la caja ${mayor.nombre}.`);
+      throw new Error(`${baseRef(it.ref)}: ${esCaja(it.ref) ? "su caja" : "una unidad"} (${it.u.map(cm).join(" × ")} cm) no cabe ni en la caja ${mayor.nombre}.`);
   const res = [];
   const meter = (tipo, lista, candidatas) => {
     const r = llenarMejor(tipo, lista);
@@ -422,7 +451,7 @@ function empaquetar(pedido){
       if (cont.every(i => r2.puestos[i.ref] === i.q)){ elegido = {tipo:t, ...r2}; break; }
     }
     items.forEach(i => { i.q -= r.puestos[i.ref] || 0; });
-    const usado = Object.entries(elegido.puestos).reduce((s,[ref,u]) => s + u*ARTS[ref].vol_ud, 0);
+    const usado = Object.entries(elegido.puestos).reduce((s,[ref,u]) => s + u*artDe(ref).vol_ud, 0);
     res.push({tipo:elegido.tipo, capas:elegido.capas, contenido:elegido.puestos, usado});
   };
   // 1) solo lo obligatorio va en caja grande (XL); el hueco que sobra se aprovecha
@@ -440,7 +469,7 @@ function empaquetar(pedido){
     for (const t of candidatas){
       const r = llenarMejor(t, lista);
       if (lista.every(i => r.puestos[i.ref] === i.q))
-        return {tipo:t, capas:r.capas, contenido:r.puestos, usado:Object.entries(r.puestos).reduce((s,[ref,u]) => s + u*ARTS[ref].vol_ud, 0)};
+        return {tipo:t, capas:r.capas, contenido:r.puestos, usado:Object.entries(r.puestos).reduce((s,[ref,u]) => s + u*artDe(ref).vol_ud, 0)};
     }
     return null;
   };
@@ -468,7 +497,8 @@ function colocacion(c, ref){
   return c.capas.filter(k => k.ref === ref).map(k => {
     const llenos = Math.floor(k.k / k.per), resto = k.k % k.per;
     let t = llenos ? `${llenos} altura${llenos>1?"s":""} de ${k.nx}×${k.ny}` : "";
-    if (resto) t += t ? ` + ${resto} encima` : `1 capa de ${resto} uds`;
+    const pieza = esCaja(ref) ? (resto === 1 ? "caja" : "cajas") : (resto === 1 ? "ud" : "uds");
+    if (resto) t += t ? ` + ${resto} encima` : `1 capa de ${resto} ${pieza}`;
     if (k.hueco) t += " en el hueco libre";
     return t;
   }).join(" · ");
@@ -622,7 +652,7 @@ async function guardarTodos(btn){
   est.innerHTML = `<span class="ok">Guardados ${ok}.</span>` + (fallos.length ? ` <span class="err">No guardados: ${esc(fallos.join(", "))}</span>` : "");
 }
 
-const descDe = r => ARTS[r]?.desc ?? DESC_EXTRA[r] ?? "";
+const descDe = r => { r = baseRef(r); return ARTS[r]?.desc ?? DESC_EXTRA[r] ?? ""; };
 const datosDoc = () => ({alb: $("fAlb").value.trim() || "—", ped: $("fPed").value.trim() || "—",
   cli: $("fProv").value.trim() || "Cliente", fecha: $("fFecha").value || "", envio: leerEnvio()});
 const aISO = t => { t = String(t||"").trim(); if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;
@@ -672,12 +702,12 @@ function pintarResultado(r){
           <div class="boxrow">
             <div class="dims"><small>Caja exterior (cm)</small>
               <strong>${c.tipo.l} × ${c.tipo.a} × ${c.tipo.h}</strong>
-              <em>${Object.values(c.contenido).reduce((s,u)=>s+u,0)} uds · ${Object.keys(c.contenido).length} ref.</em></div>
+              <em>${Object.entries(c.contenido).reduce((s,[k,u])=>s+unidadesDe(k,u),0)} uds · ${new Set(Object.keys(c.contenido).map(baseRef)).size} ref.</em></div>
           </div>
           <p class="orden">Colocar de abajo arriba:</p>
           <ul>${contenidoOrdenado(c).map(([r,u],j)=>`
-            <li><span class="mk" style="background:${colorDe(r)}">${j+1}</span><span class="q">${u}</span>
-              <span><span class="r">${esc(r)}</span><span class="d">${esc(descDe(r))}</span><span class="d pl">${colocacion(c, r)}</span></span></li>`).join("")}
+            <li><span class="mk" style="background:${colorDe(r)}">${j+1}</span><span class="q">${unidadesDe(r,u)}</span>
+              <span><span class="r">${esc(baseRef(r))}</span> <b>${esc(presentacion(r,u))}</b><span class="d">${esc(descDe(r))}</span><span class="d pl">${colocacion(c, r)}</span></span></li>`).join("")}
           </ul>
         </article>`).join("")}
       </div>`;
@@ -769,7 +799,7 @@ function paginasAlbaran(doc, {res, alb, ped, cli, fecha, envio, fuera = []}){
     doc.text(`BULTO ${i+1} / ${N}`, x+2.5, y+5);
     doc.setFontSize(9.5); doc.text(`Caja ${T.nombre} · ${T.l}×${T.a}×${T.h} cm`, x+cw-2.5, y+5, {align:"right"});
     dibujarCaja(doc, c, x+3, y+7+2+dh-2, dw-6, dh-6, false, mAlb);
-    const uds = Object.values(c.contenido).reduce((s,u)=>s+u,0);
+    const uds = Object.entries(c.contenido).reduce((s,[k,u])=>s+unidadesDe(k,u),0);
     doc.setTextColor(100,100,100); doc.setFont("helvetica","normal"); doc.setFontSize(7);
     doc.text(`${uds} uds · ${Math.round(100*c.usado/T.vol)}% lleno · dibujo a escala`, x+3, y+7+dh+4);
     // lista de contenido
@@ -785,9 +815,10 @@ function paginasAlbaran(doc, {res, alb, ped, cli, fecha, envio, fuera = []}){
       doc.setFillColor(...rgb(colorDe(r))); doc.circle(lx+2.4, ym, rad, "F");
       doc.setTextColor(255,255,255); doc.setFont("helvetica","bold"); doc.setFontSize(Math.max(5, rad*2.6));
       doc.text(String(j+1), lx+2.4, ym+rad*0.42, {align:"center"});
-      doc.setTextColor(20,20,20); doc.setFontSize(fs+1); doc.text(String(u), lx+14, ym+1.2, {align:"right"});
-      doc.text(r, lx+16, ym+1.2);
-      const xr = lx + 16 + doc.getTextWidth(r) + 2;
+      doc.setTextColor(20,20,20); doc.setFontSize(fs+1); doc.text(String(unidadesDe(r,u)), lx+14, ym+1.2, {align:"right"});
+      const rotulo = `${baseRef(r)}  ${presentacion(r,u)}`;
+      doc.text(rotulo, lx+16, ym+1.2);
+      const xr = lx + 16 + doc.getTextWidth(rotulo) + 2;
       doc.setFont("helvetica","normal"); doc.setFontSize(fs-0.5); doc.setTextColor(80,80,80);
       doc.text(doc.splitTextToSize(descDe(r), Math.max(10, lx+lw-6-xr))[0] || "", xr, ym+1.2);
       if (rowH >= 7){
@@ -855,7 +886,7 @@ function pintarRegistro(){
         <p class="note" style="margin:0 0 6px">${esc([r.cliente, textoEnvio({plat:r.plataforma, prov:r.numero_proveedor, dpto:r.departamento, destCod:r.lugar_destino,
           destino:r.centro_destino, agencia:r.agencia, bultosAlb:r.bultos_albaran})].filter(Boolean).join(" · "))}</p>
         <div class="det-b">${(r.bultos||[]).map((b,i) => `<div><b>Bulto ${i+1}/${r.bultos.length} · ${esc(b.caja)} (${esc(b.medidas)} cm)</b>
-          ${b.contenido.map(x => `<span>${x.uds} × ${esc(x.ref)} ${esc(x.desc)}</span>`).join("")}</div>`).join("")}</div>
+          ${b.contenido.map(x => `<span>${x.uds} uds × ${esc(x.ref)}${x.presentacion ? ` (${esc(x.presentacion)})` : ""} ${esc(x.desc)}</span>`).join("")}</div>`).join("")}</div>
         <div class="row"><button data-ver="${esc(r.id)}">Ver bultos y reimprimir</button>
         <button class="ghost" data-borrar="${esc(r.id)}">Borrar del registro</button><span class="note" id="borrarAviso"></span></div></td></tr>`;
     }).join("");
@@ -932,7 +963,8 @@ function datosRegistro(res, {alb, ped, cli, fecha, envio}, otros, lineas){
     bultos: res.map(c => ({
       caja: c.tipo.nombre, medidas: `${c.tipo.l}x${c.tipo.a}x${c.tipo.h}`, l: c.tipo.l, a: c.tipo.a, h: c.tipo.h,
       usado: Math.round(c.usado),
-      contenido: contenidoOrdenado(c).map(([ref,uds]) => ({ref, uds, desc: descDe(ref), colocacion: colocacion(c, ref)})),
+      contenido: contenidoOrdenado(c).map(([k,n]) => ({ref:baseRef(k), clave:k, n, uds:unidadesDe(k,n), uds_caja:udsPorCaja(k),
+        presentacion:presentacion(k,n), desc:descDe(k), colocacion:colocacion(c, k)})),
       capas: c.capas.map(k => ({ref:k.ref, x0:k.x0||0, y0:k.y0||0, z:k.z, hueco:!!k.hueco, o:k.o, nx:k.nx, ny:k.ny, per:k.per, k:k.k, niveles:k.niveles, usado:k.usado}))
     }))
   };
@@ -945,7 +977,7 @@ function resDeRegistro(r){
   const res = (r.bultos || []).map(b => ({
     tipo: {nombre:b.caja, l:b.l, a:b.a, h:b.h, vol:b.l*b.a*b.h},
     capas: b.capas.map(k => ({...k, o:[...k.o]})),
-    contenido: Object.fromEntries(b.contenido.map(x => [x.ref, x.uds])),
+    contenido: Object.fromEntries(b.contenido.map(x => { if (x.uds_caja) UDS_EXTRA[x.ref] = x.uds_caja; return [x.clave || x.ref, x.n ?? x.uds]; })),
     usado: b.usado
   }));
   return {res, alb:r.albaran, ped:r.pedido_cliente, cli:r.cliente, fecha:r.fecha_albaran, envio:envioDeRegistro(r), fuera:r.no_colocadas || []};

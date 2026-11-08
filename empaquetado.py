@@ -116,6 +116,8 @@ def leer_excel(ruta=EXCEL, cajas_por_defecto=None):
                 articulos[ref] = {
                     "ref": ref, "ean": ean, "desc": desc or (f"EAN {ean}" if ean else ""),
                     "sin_medidas": sin,
+                    "uds": int(round(uds)) or 1,
+                    "caja": None if sin else [l, a, h],
                     "vol_ud": 0 if sin else l * a * h / uds,
                     "u": None if sin else (ud if all(ud) else dims_unidad(l, a, h, uds)),
                 }
@@ -265,8 +267,56 @@ def _cabe(u, caja):
                for x, y, z in _orientaciones(u))
 
 
+def base_ref(k):
+    return str(k).split("|")[0]
+
+
+def es_caja(k):
+    return str(k).endswith("|C")
+
+
+def unidades(k, n, articulos):
+    a = articulos.get(base_ref(k), {})
+    return n * a.get("uds", 1) if es_caja(k) else n
+
+
+def presentacion(k, n, uds):
+    """'2 cajas de 4 uds', '1 ud', '3 uds sueltas'."""
+    if "|" not in str(k):
+        return f"{n} uds"
+    if es_caja(k):
+        return f"{n} caja{'s' if n > 1 else ''} de {uds} uds" if uds > 1 else f"{n} ud{'s' if n > 1 else ''}"
+    return f"{n} ud{'s' if n > 1 else ''} suelta{'s' if n > 1 else ''}"
+
+
 def empaquetar(pedido, articulos, cajas):
-    """pedido: lista de (referencia, cantidad). Devuelve lista de bultos.
+    """pedido: lista de (referencia, cantidad en unidades). Devuelve lista de bultos.
+
+    Lo que se coloca son las cajas completas del artículo (con las medidas de su caja en el
+    Excel) y, si la cantidad no es múltiplo de las uds por caja, las unidades sueltas que
+    sobran. En el contenido de cada bulto las claves son "REF|C" (cajas) y "REF|U" (sueltas).
+    """
+    piezas, lista = {}, []
+    for ref, cant in pedido:
+        if ref not in articulos:
+            raise ValueError(f"Referencia desconocida: {ref}")
+        a = articulos[ref]
+        if a.get("sin_medidas"):
+            raise ValueError(f"{ref}: faltan las medidas en el Excel maestro.")
+        uds = max(1, int(a.get("uds", 1)))
+        c, r = divmod(int(cant), uds)
+        if c:
+            l, an, h = a["caja"]
+            piezas[f"{ref}|C"] = {**a, "ref": f"{ref}|C", "u": [l, an, h], "vol_ud": l * an * h}
+            lista.append((f"{ref}|C", c))
+        if r:
+            piezas[f"{ref}|U"] = {**a, "ref": f"{ref}|U"}
+            lista.append((f"{ref}|U", r))
+    return _empaquetar_piezas(lista, piezas, cajas)
+
+
+def _empaquetar_piezas(pedido, articulos, cajas):
+    """pedido: lista de (pieza, cantidad). Devuelve lista de bultos.
 
     Las cajas marcadas "solo si no cabe" (XL) solo se usan para unidades que no
     caben en la caja normal más grande (L); el resto va en L o en una menor.
@@ -285,7 +335,8 @@ def empaquetar(pedido, articulos, cajas):
     orden = sorted(pend, key=lambda r: articulos[r]["vol_ud"], reverse=True)
     for ref in orden:
         if not _cabe(articulos[ref]["u"], mayor):
-            raise ValueError(f"{ref}: una unidad no cabe ni en la caja {mayor['nombre']}.")
+            raise ValueError(f"{base_ref(ref)}: {'su caja' if es_caja(ref) else 'una unidad'} "
+                             f"no cabe ni en la caja {mayor['nombre']}.")
 
     bultos = []
 
@@ -367,7 +418,8 @@ def colocacion(bulto, ref):
         llenos, resto = divmod(k["k"], k["per"])
         t = f"{llenos} altura{'s' if llenos > 1 else ''} de {k['nx']}x{k['ny']}" if llenos else ""
         if resto:
-            t += f" + {resto} encima" if t else f"1 capa de {resto} uds"
+            pieza = ("caja" if resto == 1 else "cajas") if es_caja(ref) else ("ud" if resto == 1 else "uds")
+            t += f" + {resto} encima" if t else f"1 capa de {resto} {pieza}"
         if k.get("hueco"):
             t += " en el hueco libre"
         partes.append(t)
@@ -440,8 +492,10 @@ def imprimir(bultos, articulos, albaran="", pedido=""):
         llenado = 100 * b["usado"] / c["vol"]
         print(f"\nBULTO {i}/{total}  caja {c['nombre']} ({c['l']:g}x{c['a']:g}x{c['h']:g} cm)  {llenado:.0f}% lleno")
         print("  Colocar de abajo arriba:")
-        for j, (ref, uds) in enumerate(b["contenido"].items(), 1):
-            print(f"   {j}. {uds:>4} x {ref}  {articulos[ref]['desc']}  [{colocacion(b, ref)}]")
+        for j, (k, n) in enumerate(b["contenido"].items(), 1):
+            a = articulos[base_ref(k)]
+            print(f"   {j}. {unidades(k, n, articulos):>4} uds  {base_ref(k)} ({presentacion(k, n, a.get('uds', 1))})"
+                  f"  {a['desc']}  [{colocacion(b, k)}]")
         print("  Colocación paso a paso:")
         for n, t in enumerate(pasos(b), 1):
             print(f"   Paso {n}. {t}")

@@ -133,6 +133,7 @@ details .tbl{max-height:280px;overflow-y:auto;margin-top:10px}
     <button role="tab" data-vista="pedidos" aria-selected="true">Pedidos</button>
     <button role="tab" data-vista="maestro" aria-selected="false">Maestro de artículos</button>
     <button role="tab" data-vista="cajas" aria-selected="false">Cajas de envío</button>
+    <button role="tab" data-vista="centros" aria-selected="false">Centros de destino</button>
   </nav>
 
   <div id="v-pedidos" class="vista">
@@ -201,6 +202,21 @@ details .tbl{max-height:280px;overflow-y:auto;margin-top:10px}
       </div>
       <p class="note">Medidas en cm de la <b>caja del artículo</b> y unidades que trae esa caja: la caja del artículo nunca se abre: se colocan cajas completas y, si sobran unidades, van dentro de su caja (caja incompleta, con las mismas medidas). Las medidas de una unidad no se usan para colocar. Las filas en naranja no tienen medidas y no se pueden meter en cajas. <span id="origen"></span></p>
       <div class="tbl alta"><table id="tArt" class="ed"></table></div>
+    </section>
+  </div>
+
+  <div id="v-centros" class="vista" hidden>
+    <section>
+      <h2>Centros de destino</h2>
+      <div class="row barra-ed">
+        <label class="file" for="cxls">Cargar desde Excel<input type="file" id="cxls" accept=".xlsx,.xls"></label>
+        <button class="ghost" id="dAdd">Añadir centro</button>
+        <input id="dBuscar" type="search" placeholder="Buscar código o centro" aria-label="Buscar centro" style="flex:1 1 200px">
+        <button id="dGuardar">Guardar cambios</button>
+        <span id="dEstado" class="note"></span>
+      </div>
+      <p class="note">El código es el «Lugar de destino» / «Centro» del albarán. Con él se pone el nombre del centro en la hoja y se decide el destino en grande: <b>Canarias</b> o <b>Portugal</b> → «MADRID · CANARIAS» / «MADRID · PORTUGAL»; el resto, según la plataforma (0050 Madrid, 0062 Barcelona). Al cargar el Excel la zona se rellena sola (Portugal si el punto operacional empieza por 560; Canarias para Las Palmas, Tenerife y Siete Palmas); revísala.</p>
+      <div class="tbl alta"><table id="tCentros" class="ed"></table></div>
     </section>
   </div>
 
@@ -433,7 +449,7 @@ $("cGuardar").onclick = async () => {
 document.querySelector(".vistas").addEventListener("click", e => {
   const v = e.target.dataset.vista; if (!v) return;
   document.querySelectorAll(".vistas button").forEach(b => b.setAttribute("aria-selected", String(b.dataset.vista === v)));
-  for (const id of ["pedidos","maestro","cajas"]) $("v-"+id).hidden = id !== v;
+  for (const id of ["pedidos","maestro","cajas","centros"]) $("v-"+id).hidden = id !== v;
 });
 
 /* ---------- líneas del albarán ---------- */
@@ -730,7 +746,7 @@ ENVIO_CAMPOS.forEach(([k]) => $("e_"+k).addEventListener("change", () => guardar
 /* Destino grande para el almacén: por la plataforma de entrega (0050 Madrid, 0062 Barcelona).
    Si el centro de destino es de Canarias o Portugal, siempre "MADRID · CANARIAS" o "MADRID · PORTUGAL". */
 const PLATAFORMAS = {"0050": "MADRID", "0062": "BARCELONA"};
-let ZONAS_DESTINO = {};   // código de lugar de destino -> zona (se cargará desde el Excel de destinos)
+let ZONAS_DESTINO = {}, NOMBRES_CENTRO = {};   // código de lugar de destino -> zona / nombre (pestaña Centros de destino)
 const codigo4 = v => { const d = String(v || "").replace(/\D/g, ""); return d ? d.padStart(4, "0").slice(-4) : ""; };
 function destinoGrande(e){
   if (!e) return "";
@@ -739,6 +755,91 @@ function destinoGrande(e){
   if (/PORTUGAL/.test(zona)) return "MADRID · PORTUGAL";
   return PLATAFORMAS[codigo4(e.plat)] || "";
 }
+const nombreCentro = cod => NOMBRES_CENTRO[codigo4(cod)] || "";
+
+/* ---------- pestaña Centros de destino ---------- */
+let CENTROS = [];
+const ZONAS = ["", "Canarias", "Portugal"];
+function zonaAuto(nombre, gln){
+  if (/^560/.test(String(gln || ""))) return "Portugal";
+  if (/LAS PALMAS|TENERIFE|SIETE PALMAS|CANARIAS|GRAN CANARIA|LANZAROTE|FUERTEVENTURA/i.test(String(nombre || ""))) return "Canarias";
+  return "";
+}
+function usarCentros(lista){
+  CENTROS = lista.map(c => ({codigo: codigo4(c.codigo), nombre: String(c.nombre || "").trim(), gln: String(c.gln || "").trim(), zona: c.zona || ""}))
+    .filter(c => c.codigo);
+  ZONAS_DESTINO = Object.fromEntries(CENTROS.filter(c => c.zona).map(c => [c.codigo, c.zona]));
+  NOMBRES_CENTRO = Object.fromEntries(CENTROS.map(c => [c.codigo, c.nombre]));
+  pintarCentros();
+  for (const a of ALBARANES) if (a.envio?.destCod && !a.envio.destino) a.envio.destino = nombreCentro(a.envio.destCod);
+  if (ALBARANES[ACTIVO] && !$("e_destino").value) $("e_destino").value = nombreCentro($("e_destCod").value);
+}
+function leerCentros(wb){
+  for (const name of wb.SheetNames){
+    const filas = XLSX.utils.sheet_to_json(wb.Sheets[name], {header:1, blankrows:false, raw:false});
+    const ic = filas.slice(0, 15).findIndex(f => col(f,"cód","codigo","código") >= 0 && col(f,"nombre","centro") >= 0);
+    if (ic < 0) continue;
+    const cab = filas[ic], iC = col(cab,"cód","codigo","código"), iN = col(cab,"nombre","centro"),
+      iG = col(cab,"operacional","gln","ean");
+    let iZ = col(cab,"zona","provincia","región","region");
+    // columna de zona aunque no tenga título: la que trae "Canarias" o "Portugal"
+    if (iZ < 0) iZ = Math.max(...filas.slice(ic+1).map(f => f.findIndex(v => /canar|portug/i.test(String(v ?? "")))), -1);
+    const out = [];
+    for (const f of filas.slice(ic+1)){
+      if (f[iC] == null || f[iC] === "") continue;
+      const nombre = f[iN], gln = iG >= 0 ? f[iG] : "";
+      out.push({codigo: f[iC], nombre, gln, zona: iZ >= 0 && f[iZ] ? (/canar/i.test(f[iZ]) ? "Canarias" : /portug/i.test(f[iZ]) ? "Portugal" : "") : zonaAuto(nombre, gln)});
+    }
+    if (out.length) return out;
+  }
+  throw new Error("No encuentro una hoja con las columnas Código y Nombre centro.");
+}
+function pintarCentros(){
+  const q = norm($("dBuscar").value);
+  $("tCentros").innerHTML = `<tr><th>Código</th><th>Nombre centro</th><th>Punto operacional</th><th>Zona</th><th>Destino en grande</th><th></th></tr>` +
+    CENTROS.map((c, i) => [c, i]).filter(([c]) => !q || norm(`${c.codigo} ${c.nombre}`).includes(q)).map(([c, i]) => `<tr>
+      <td><input type="text" class="num" data-i="${i}" data-k="codigo" id="dc${i}_c" value="${esc(c.codigo)}" aria-label="Código"></td>
+      <td><input type="text" data-i="${i}" data-k="nombre" id="dc${i}_n" value="${esc(c.nombre)}" aria-label="Nombre"></td>
+      <td><input type="text" data-i="${i}" data-k="gln" id="dc${i}_g" value="${esc(c.gln)}" aria-label="Punto operacional"></td>
+      <td><select data-i="${i}" data-k="zona" id="dc${i}_z" aria-label="Zona">${ZONAS.map(z => `<option value="${z}" ${z === c.zona ? "selected" : ""}>${z || "Península / Baleares"}</option>`).join("")}</select></td>
+      <td class="note">${c.zona ? `MADRID · ${c.zona.toUpperCase()}` : "según plataforma"}</td>
+      <td><button class="x" data-del="${i}" aria-label="Borrar centro">✕</button></td></tr>`).join("");
+}
+$("tCentros").addEventListener("change", e => {
+  const t = e.target, i = +t.dataset.i; if (isNaN(i)) return;
+  CENTROS[i][t.dataset.k] = t.value.trim();
+  $("dEstado").innerHTML = '<span class="err">Cambios sin guardar.</span>';
+});
+$("tCentros").addEventListener("click", e => {
+  const d = e.target.dataset.del; if (d === undefined) return;
+  CENTROS.splice(+d, 1); pintarCentros(); $("dEstado").innerHTML = '<span class="err">Cambios sin guardar.</span>';
+});
+$("dBuscar").addEventListener("input", pintarCentros);
+$("dAdd").onclick = () => { CENTROS.unshift({codigo:"", nombre:"", gln:"", zona:""}); $("dBuscar").value = ""; pintarCentros(); $("dc0_c").focus(); };
+async function persistirCentros(){
+  try { localStorage.setItem("centros", JSON.stringify(CENTROS)); } catch(_){}
+  if (!DB) return "en este navegador";
+  await DB.collection("config").doc("centros").set({actualizado:new Date().toISOString(), centros:CENTROS});
+  return "en el registro compartido";
+}
+async function guardarCentros(){
+  const est = $("dEstado"), cods = CENTROS.map(c => codigo4(c.codigo)).filter(Boolean);
+  const dup = [...new Set(cods.filter((c, i) => cods.indexOf(c) !== i))];
+  if (dup.length){ est.innerHTML = `<span class="err">Códigos repetidos: ${esc(dup.join(", "))}</span>`; return; }
+  usarCentros(CENTROS);
+  if (LINEAS.length) calcular();
+  try { est.innerHTML = `<span class="ok">Guardado ${await persistirCentros()}: ${CENTROS.length} centros.</span>`; }
+  catch(e){ est.innerHTML = `<span class="err">Guardado solo en este navegador (${esc(e.code||"error")}).</span>`; }
+}
+$("dGuardar").onclick = guardarCentros;
+$("cxls").addEventListener("change", async ev => {
+  const f = ev.target.files[0]; if (!f) return;
+  try { usarCentros(leerCentros(XLSX.read(await f.arrayBuffer(), {type:"array"}))); await guardarCentros();
+    $("dEstado").innerHTML = `<span class="ok">Cargados ${CENTROS.length} centros de ${esc(f.name)} (${CENTROS.filter(c => c.zona).length} de Canarias o Portugal).</span>`; }
+  catch(e){ $("dEstado").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+  ev.target.value = "";
+});
+
 const leerEnvio = () => Object.fromEntries(ENVIO_CAMPOS.map(([k]) => [k, $("e_"+k).value.trim()]));
 const textoEnvio = e => [e?.plat ? `Plataforma ${e.plat}` : "", e?.destCod || e?.destino ? `Destino ${[e.destCod, e.destino].filter(Boolean).join(" ")}` : "",
   e?.agencia ? `Agencia ${e.agencia}` : "", e?.dpto ? `Dpto. ${e.dpto}` : "", e?.prov ? `Nº proveedor ${e.prov}` : "",
@@ -753,6 +854,7 @@ function activar(i, recalcular = true){
   guardarActivo(); ACTIVO = i;
   const a = ALBARANES[i];
   $("fAlb").value = a.alb || ""; $("fPed").value = a.ped || ""; $("fProv").value = a.cli || "El Corte Inglés"; $("fFecha").value = a.fecha || "";
+  if (a.envio?.destCod && !a.envio.destino) a.envio.destino = nombreCentro(a.envio.destCod);
   ENVIO_CAMPOS.forEach(([k]) => $("e_"+k).value = a.envio?.[k] || "");
   LINEAS = a.lineas; pintarLineas(); pintarOtros(); pintarTabs();
   if (recalcular){ if (LINEAS.length) calcular(); else $("out").innerHTML = '<p class="note">Este albarán no tiene líneas.</p>'; }
@@ -1026,7 +1128,9 @@ async function iniciarRegistro(){
   if (!DB){ est.textContent = "El registro no está disponible en esta vista."; $("tReg").innerHTML = ""; if ($("saveBtn")) $("saveBtn").hidden = true; return; }
   if ($("saveBtn")) $("saveBtn").hidden = false;
   try {
-    const [m, c] = await Promise.all([DB.collection("config").doc("maestro").get(), DB.collection("config").doc("cajas").get()]);
+    const [m, c, d] = await Promise.all([DB.collection("config").doc("maestro").get(), DB.collection("config").doc("cajas").get(),
+      DB.collection("config").doc("centros").get()]);
+    if (d.exists && Array.isArray(d.data().centros)) usarCentros(d.data().centros);
     if (m.exists && m.data().articulos?.length){
       const cajas = c.exists && c.data().cajas?.length ? c.data().cajas.map(cajaTupla) : CAJAS.map(x => [x.nombre, x.l, x.a, x.h, x.soloSiNoCabe]);
       aplicarMaestro(m.data().articulos.map(artTupla), cajas, m.data().nombre);
@@ -1345,7 +1449,7 @@ function unirAlbaranes(encontrados){
     const otros = x.otros_datos && typeof x.otros_datos === "object" ? x.otros_datos : {};
     const ev = x.envio && typeof x.envio === "object" ? x.envio : {};
     const envio = {plat:String(ev.plataforma||""), prov:String(ev.numero_proveedor||""), dpto:String(ev.departamento||""), destCod:String(ev.lugar_destino||""),
-      destino:String(ev.centro_destino||""), agencia:String(ev.agencia||""), bultosAlb:String(ev.total_bultos||"")};
+      destino:String(ev.centro_destino||"") || nombreCentro(ev.lugar_destino), agencia:String(ev.agencia||""), bultosAlb:String(ev.total_bultos||"")};
     if (dest){
       dest.envio ||= {};
       for (const [k,v] of Object.entries(envio)) if (v && !dest.envio[k]) dest.envio[k] = v;
@@ -1449,6 +1553,8 @@ $("xls").addEventListener("change", async ev => {
 });
 
 /* ---------- arranque ---------- */
+try { const c = JSON.parse(localStorage.getItem("centros") || "null"); if (Array.isArray(c)) usarCentros(c); } catch(_){}
+
 let guardado = null;
 try { guardado = JSON.parse(localStorage.getItem("maestro") || "null"); } catch(_){}
 if (guardado?.arts?.length && guardado?.cajas?.length){

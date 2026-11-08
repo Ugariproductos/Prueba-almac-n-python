@@ -360,9 +360,8 @@ def empaquetar(pedido, articulos, cajas):
 
     Lo que se coloca son las cajas completas del artículo (con las medidas de su caja en el
     Excel) y, si la cantidad no es múltiplo de las uds por caja, las unidades sueltas que
-    sobran, solo si el maestro tiene las medidas reales de la unidad; si no, lo que sobra ocupa el
-    sitio de una caja completa. Claves del contenido: "REF|C" (cajas), "REF|U" (sueltas) y
-    "REF|R3" (caja incompleta con 3 uds).
+    sobran, van dentro de su caja (la caja del artículo nunca se abre): una caja incompleta con las
+    mismas medidas. Claves del contenido: "REF|C" (cajas completas) y "REF|R3" (caja incompleta con 3 uds).
     """
     piezas, lista = {}, []
     for ref, cant in pedido:
@@ -377,10 +376,7 @@ def empaquetar(pedido, articulos, cajas):
             l, an, h = a["caja"]
             piezas[f"{ref}|C"] = {**a, "ref": f"{ref}|C", "u": [l, an, h], "vol_ud": l * an * h}
             lista.append((f"{ref}|C", c))
-        if r and all(a.get("ud") or [None]):
-            piezas[f"{ref}|U"] = {**a, "ref": f"{ref}|U"}
-            lista.append((f"{ref}|U", r))
-        elif r:
+        if r:                                   # las uds que sobran van dentro de su caja: la caja no se abre
             l, an, h = a["caja"]
             piezas[f"{ref}|R{r}"] = {**a, "ref": f"{ref}|R{r}", "u": [l, an, h], "vol_ud": l * an * h}
             lista.append((f"{ref}|R{r}", 1))

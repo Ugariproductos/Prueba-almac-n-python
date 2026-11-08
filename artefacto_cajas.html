@@ -199,7 +199,7 @@ details .tbl{max-height:280px;overflow-y:auto;margin-top:10px}
         <button id="mGuardar">Guardar cambios</button>
         <span id="mEstado" class="note"></span>
       </div>
-      <p class="note">Medidas en cm de la <b>caja del artículo</b> y unidades que trae esa caja: se colocan cajas completas. Si sobran unidades, van sueltas solo si rellenas las medidas de una unidad; si no, ocupan el sitio de una caja completa. Las filas en naranja no tienen medidas y no se pueden meter en cajas. <span id="origen"></span></p>
+      <p class="note">Medidas en cm de la <b>caja del artículo</b> y unidades que trae esa caja: la caja del artículo nunca se abre: se colocan cajas completas y, si sobran unidades, van dentro de su caja (caja incompleta, con las mismas medidas). Las medidas de una unidad no se usan para colocar. Las filas en naranja no tienen medidas y no se pueden meter en cajas. <span id="origen"></span></p>
       <div class="tbl alta"><table id="tArt" class="ed"></table></div>
     </section>
   </div>
@@ -246,8 +246,8 @@ const norm = s => String(s ?? "").toUpperCase().replace(/[\s.\-_/]/g, "");
 /* ---------- maestro ---------- */
 /* Lo que se coloca: cajas completas del artículo (con las medidas de la caja del Excel) y,
    si la cantidad no es múltiplo de las uds por caja, las unidades sueltas que sobran.
-   Claves internas: "REF|C" = caja del artículo, "REF|U" = unidad suelta (solo si el maestro tiene las medidas
-   reales de la unidad) y "REF|R3" = caja incompleta con 3 uds (sin medidas de unidad, ocupa una caja entera). */
+   La caja del artículo nunca se abre: lo que sobra va dentro de su caja (caja incompleta, mismas medidas).
+   Claves internas: "REF|C" = caja completa, "REF|R3" = caja incompleta con 3 uds. */
 let VIRT = {}; const UDS_EXTRA = {};
 const baseRef = k => String(k).split("|")[0];
 const esCaja = k => /\|(C|R\d+)$/.test(String(k));
@@ -271,8 +271,7 @@ function artDe(k){
 function partirEnCajas(ref, q){
   const uds = Math.max(1, Math.round(ARTS[ref].uds || 1)), c = Math.floor(q/uds), r = q % uds, out = [];
   if (c) out.push([`${ref}|C`, c]);
-  const a = ARTS[ref];
-  if (r) out.push(a.ul && a.ua && a.uh ? [`${ref}|U`, r] : [`${ref}|R${r}`, 1]);
+  if (r) out.push([`${ref}|R${r}`, 1]);      // las uds que sobran van dentro de su caja: la caja no se abre
   return out;
 }
 function cargarMaestro(arts, cajas){

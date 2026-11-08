@@ -165,12 +165,12 @@ details .tbl{max-height:280px;overflow-y:auto;margin-top:10px}
     <div class="tbl"><table id="tLineas"></table></div>
     <div class="row" style="margin-top:10px">
       <button class="ghost" id="add">Añadir línea</button>
-      <button id="calc">Calcular cajas</button>
+      <button id="calc">Ver bultos e imprimir</button>
       <span id="avisoLineas" class="note"></span>
     </div>
   </section>
 
-  <section>
+  <section id="secBultos" hidden>
     <h2>3 · Bultos</h2>
     <div id="out"></div>
   </section>
@@ -851,6 +851,7 @@ function guardarActivo(){
   Object.assign(a, {alb:$("fAlb").value.trim(), ped:$("fPed").value.trim(), cli:$("fProv").value.trim(), fecha:$("fFecha").value, lineas:LINEAS, envio:leerEnvio()});
 }
 function activar(i, recalcular = true){
+  $("secBultos").hidden = true;
   guardarActivo(); ACTIVO = i;
   const a = ALBARANES[i];
   $("fAlb").value = a.alb || ""; $("fPed").value = a.ped || ""; $("fProv").value = a.cli || "El Corte Inglés"; $("fFecha").value = a.fecha || "";
@@ -987,7 +988,9 @@ function pintarResultado(r){
   $("saveBtn").onclick = guardarRegistro;
   $("saveBtn").hidden = !DB;
 }
-$("calc").onclick = calcular;
+/* El apartado de bultos solo se enseña al pulsar «Ver bultos e imprimir» (o al abrir un pedido del registro) */
+function mostrarBultos(){ $("secBultos").hidden = false; $("secBultos").scrollIntoView({behavior:"smooth", block:"start"}); }
+$("calc").onclick = () => { calcular(); mostrarBultos(); };
 
 /* ---------- hoja de almacén en PDF ---------- */
 const rgb = hex => [1,3,5].map(i => parseInt(hex.slice(i,i+2),16));
@@ -1273,7 +1276,7 @@ function abrirRegistro(r){
       .map(l => ({ref:l.ref, desc:l.desc || "", cant:l.cant, otros:l.otros || {}}))}];
   activar(0, false);
   pintarResultado({...resDeRegistro(r), guardado:true});
-  $("out").scrollIntoView({behavior:"smooth", block:"start"});
+  mostrarBultos();
 }
 iniciarRegistro();
 

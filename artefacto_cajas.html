@@ -199,7 +199,7 @@ details .tbl{max-height:280px;overflow-y:auto;margin-top:10px}
         <button id="mGuardar">Guardar cambios</button>
         <span id="mEstado" class="note"></span>
       </div>
-      <p class="note">Medidas en cm de la <b>caja del artículo</b> y unidades que trae esa caja: se colocan cajas completas y, si sobran, unidades sueltas. Las medidas de una unidad son opcionales (si faltan se estiman). Las filas en naranja no tienen medidas y no se pueden meter en cajas. <span id="origen"></span></p>
+      <p class="note">Medidas en cm de la <b>caja del artículo</b> y unidades que trae esa caja: se colocan cajas completas. Si sobran unidades, van sueltas solo si rellenas las medidas de una unidad; si no, ocupan el sitio de una caja completa. Las filas en naranja no tienen medidas y no se pueden meter en cajas. <span id="origen"></span></p>
       <div class="tbl alta"><table id="tArt" class="ed"></table></div>
     </section>
   </div>
@@ -246,15 +246,18 @@ const norm = s => String(s ?? "").toUpperCase().replace(/[\s.\-_/]/g, "");
 /* ---------- maestro ---------- */
 /* Lo que se coloca: cajas completas del artículo (con las medidas de la caja del Excel) y,
    si la cantidad no es múltiplo de las uds por caja, las unidades sueltas que sobran.
-   Claves internas: "REF|C" = caja del artículo, "REF|U" = unidad suelta. */
+   Claves internas: "REF|C" = caja del artículo, "REF|U" = unidad suelta (solo si el maestro tiene las medidas
+   reales de la unidad) y "REF|R3" = caja incompleta con 3 uds (sin medidas de unidad, ocupa una caja entera). */
 let VIRT = {}; const UDS_EXTRA = {};
 const baseRef = k => String(k).split("|")[0];
-const esCaja = k => String(k).endsWith("|C");
+const esCaja = k => /\|(C|R\d+)$/.test(String(k));
+const restoDe = k => +((String(k).match(/\|R(\d+)$/) || [])[1] || 0);
 const udsPorCaja = ref => ARTS[baseRef(ref)]?.uds || UDS_EXTRA[baseRef(ref)] || 1;
-const unidadesDe = (k, n) => esCaja(k) ? n * udsPorCaja(k) : n;
+const unidadesDe = (k, n) => restoDe(k) ? n * restoDe(k) : esCaja(k) ? n * udsPorCaja(k) : n;
 function presentacion(k, n){
   const uds = udsPorCaja(k);
   if (!String(k).includes("|")) return `${n} uds`;
+  if (restoDe(k)){ const r = restoDe(k); return `${n} caja${n>1?"s":""} incompleta${n>1?"s":""} con ${r} ud${r>1?"s":""}`; }
   return esCaja(k) ? (uds > 1 ? `${n} caja${n>1?"s":""} de ${uds} uds` : `${n} ud${n>1?"s":""}`) : `${n} ud${n>1?"s":""} suelta${n>1?"s":""}`;
 }
 function artDe(k){
@@ -268,7 +271,8 @@ function artDe(k){
 function partirEnCajas(ref, q){
   const uds = Math.max(1, Math.round(ARTS[ref].uds || 1)), c = Math.floor(q/uds), r = q % uds, out = [];
   if (c) out.push([`${ref}|C`, c]);
-  if (r) out.push([`${ref}|U`, r]);
+  const a = ARTS[ref];
+  if (r) out.push(a.ul && a.ua && a.uh ? [`${ref}|U`, r] : [`${ref}|R${r}`, 1]);
   return out;
 }
 function cargarMaestro(arts, cajas){

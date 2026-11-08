@@ -328,10 +328,17 @@ def base_ref(k):
 
 
 def es_caja(k):
-    return str(k).endswith("|C")
+    return re.search(r"\|(C|R\d+)$", str(k)) is not None
+
+
+def resto_de(k):
+    m = re.search(r"\|R(\d+)$", str(k))
+    return int(m.group(1)) if m else 0
 
 
 def unidades(k, n, articulos):
+    if resto_de(k):
+        return n * resto_de(k)
     a = articulos.get(base_ref(k), {})
     return n * a.get("uds", 1) if es_caja(k) else n
 
@@ -340,6 +347,9 @@ def presentacion(k, n, uds):
     """'2 cajas de 4 uds', '1 ud', '3 uds sueltas'."""
     if "|" not in str(k):
         return f"{n} uds"
+    if resto_de(k):
+        r = resto_de(k)
+        return f"{n} caja{'s' if n > 1 else ''} incompleta{'s' if n > 1 else ''} con {r} ud{'s' if r > 1 else ''}"
     if es_caja(k):
         return f"{n} caja{'s' if n > 1 else ''} de {uds} uds" if uds > 1 else f"{n} ud{'s' if n > 1 else ''}"
     return f"{n} ud{'s' if n > 1 else ''} suelta{'s' if n > 1 else ''}"
@@ -350,7 +360,9 @@ def empaquetar(pedido, articulos, cajas):
 
     Lo que se coloca son las cajas completas del artículo (con las medidas de su caja en el
     Excel) y, si la cantidad no es múltiplo de las uds por caja, las unidades sueltas que
-    sobran. En el contenido de cada bulto las claves son "REF|C" (cajas) y "REF|U" (sueltas).
+    sobran, solo si el maestro tiene las medidas reales de la unidad; si no, lo que sobra ocupa el
+    sitio de una caja completa. Claves del contenido: "REF|C" (cajas), "REF|U" (sueltas) y
+    "REF|R3" (caja incompleta con 3 uds).
     """
     piezas, lista = {}, []
     for ref, cant in pedido:
@@ -365,9 +377,13 @@ def empaquetar(pedido, articulos, cajas):
             l, an, h = a["caja"]
             piezas[f"{ref}|C"] = {**a, "ref": f"{ref}|C", "u": [l, an, h], "vol_ud": l * an * h}
             lista.append((f"{ref}|C", c))
-        if r:
+        if r and all(a.get("ud") or [None]):
             piezas[f"{ref}|U"] = {**a, "ref": f"{ref}|U"}
             lista.append((f"{ref}|U", r))
+        elif r:
+            l, an, h = a["caja"]
+            piezas[f"{ref}|R{r}"] = {**a, "ref": f"{ref}|R{r}", "u": [l, an, h], "vol_ud": l * an * h}
+            lista.append((f"{ref}|R{r}", 1))
     return _empaquetar_piezas(lista, piezas, cajas)
 
 

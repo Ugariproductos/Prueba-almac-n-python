@@ -170,7 +170,11 @@ details .tbl{max-height:280px;overflow-y:auto;margin-top:10px}
   <section id="regSec">
     <h2>4 · Registro de envíos</h2>
     <div class="row" style="margin-bottom:10px">
-      <input id="regBuscar" type="search" placeholder="Buscar pedido, albarán o referencia" style="flex:1 1 260px" aria-label="Buscar en el registro">
+      <input id="regBuscar" type="search" placeholder="Buscar pedido, albarán, destino o referencia" style="flex:1 1 240px" aria-label="Buscar en el registro">
+      <label for="regFecha" class="note">Fecha albarán</label>
+      <input id="regFecha" type="date" aria-label="Filtrar por fecha del albarán">
+      <button class="ghost" id="regTodas">Todas las fechas</button>
+      <button id="regImprimir">Imprimir fichas mostradas</button>
       <span id="regEstado" class="note">Cargando registro…</span>
     </div>
     <div class="tbl"><table id="tReg"></table></div>
@@ -605,13 +609,13 @@ async function guardarTodos(btn){
     if (!a.alb || !a.ped || !a.fecha){ fallos.push(`${a.alb || "sin número"} (falta albarán, pedido o fecha)`); continue; }
     try { listos.push({a, r: resultadoDe(a)}); } catch(e){ fallos.push(`${a.alb} (${e.message})`); }
   }
-  const existen = listos.filter(x => REGISTROS.some(r => r.id === idDoc(x.a.alb)));
+  const existen = listos.filter(x => REGISTROS.some(r => r.id === idDoc(x.a.ped)));
   if (existen.length && btn.dataset.confirmar !== "1"){
-    btn.dataset.confirmar = "1"; btn.textContent = `${existen.length} ya existen: pulsa otra vez para sustituirlos`; return;
+    btn.dataset.confirmar = "1"; btn.textContent = `${existen.length} pedido${existen.length>1?"s":""} ya registrado${existen.length>1?"s":""}: pulsa otra vez para sustituir`; return;
   }
   btn.disabled = true; let ok = 0;
   for (const {a, r} of listos){
-    try { await DB.collection("envios").doc(idDoc(a.alb)).set(datosRegistro(r.res, {...r, envio:a.envio}, a.otros, a.lineas)); ok++; }
+    try { await DB.collection("envios").doc(idDoc(a.ped)).set(datosRegistro(r.res, {...r, envio:a.envio}, a.otros, a.lineas)); ok++; }
     catch(e){ fallos.push(`${a.alb} (${e.code || "error"})`); }
   }
   btn.disabled = false; btn.dataset.confirmar = ""; btn.textContent = "Guardar todos en el registro";
@@ -730,7 +734,7 @@ function paginasAlbaran(doc, {res, alb, ped, cli, fecha, envio, fuera = []}){
     doc.setTextColor(20,20,20); doc.setFontSize(15);
   }
   doc.text("HOJA DE PREPARACIÓN", M, T0+5);
-  doc.text(`${N} BULTO${N>1?"S":""}`, M+W, T0+5, {align:"right"});
+  doc.text(`${N} BULTO${N!==1?"S":""}`, M+W, T0+5, {align:"right"});
   const celdas = [[`PEDIDO ${cli.toUpperCase()}`, ped, .4], ["ALBARÁN UGARI", alb, .4], ["FECHA ALBARÁN", fechaES(fecha), .2]];
   let cx = M;
   for (const [t, v, f] of celdas){
@@ -812,7 +816,7 @@ async function descargarPDF(){
 }
 
 /* ---------- registro de envíos (db) ---------- */
-let DB = null, REGISTROS = [], ABIERTO = null;
+let DB = null, REGISTROS = [], ABIERTO = null, VISIBLES = [];
 const idDoc = a => String(a).trim().replace(/[^A-Za-z0-9_\-.~:@+]+/g, "_").replace(/^\.+/, "_").slice(0, 120) || "sin_numero";
 
 async function iniciarRegistro(){
@@ -830,19 +834,24 @@ async function iniciarRegistro(){
 
 function pintarRegistro(){
   const q = norm($("regBuscar").value);
-  const lista = REGISTROS.filter(r => !q || norm([r.pedido_cliente, r.albaran, r.plataforma, r.centro_destino, r.lugar_destino, r.agencia,
+  const fFiltro = $("regFecha").value;
+  const lista = REGISTROS.filter(r => (!fFiltro || r.fecha_albaran === fFiltro)).filter(r => !q || norm([r.pedido_cliente, r.albaran, r.plataforma, r.centro_destino, r.lugar_destino, r.agencia,
     ...(r.bultos||[]).flatMap(b => b.contenido.map(x => x.ref))].join(" ")).includes(q));
-  $("regEstado").textContent = REGISTROS.length ? `${lista.length} de ${REGISTROS.length} envíos` : "";
+  VISIBLES = lista;
+  $("regEstado").textContent = REGISTROS.length ? `${lista.length} de ${REGISTROS.length} pedidos` : "";
+  $("regImprimir").textContent = `Imprimir ${lista.length} ficha${lista.length === 1 ? "" : "s"}${fFiltro ? ` del ${fechaES(fFiltro)}` : ""}`;
+  $("regImprimir").disabled = !lista.length;
   if (!REGISTROS.length){ $("tReg").innerHTML = '<tr><td class="note">Todavía no hay envíos guardados. Calcula un albarán y pulsa «Guardar en el registro».</td></tr>'; return; }
-  $("tReg").innerHTML = "<tr><th>Fecha albarán</th><th>Pedido cliente</th><th>Albarán Ugari</th><th>Destino</th><th>Agencia</th><th>Bultos</th><th>Cajas</th><th>Uds</th></tr>" +
+  $("tReg").innerHTML = "<tr><th>Fecha albarán</th><th>Pedido El Corte Inglés</th><th>Albarán Ugari</th><th>Destino</th><th>Agencia</th><th>Bultos</th><th>Cajas</th><th>Uds</th><th></th></tr>" +
     lista.map(r => {
       const cajas = {}; (r.bultos||[]).forEach(b => cajas[b.caja] = (cajas[b.caja]||0)+1);
       const uds = (r.bultos||[]).reduce((s,b) => s + b.contenido.reduce((t,x) => t + x.uds, 0), 0);
       const fila = `<tr class="fila" data-id="${esc(r.id)}" tabindex="0"><td class="n">${esc(fechaES(r.fecha_albaran))}</td><td><b>${esc(r.pedido_cliente)}</b></td><td>${esc(r.albaran)}</td>
         <td>${esc([r.lugar_destino, r.centro_destino].filter(Boolean).join(" ") || r.cliente)}</td><td>${esc(r.agencia || "")}</td>
-        <td class="n">${(r.bultos||[]).length}${r.bultos_albaran && +r.bultos_albaran !== (r.bultos||[]).length ? ` <span class="err" title="Bultos según albarán">(alb. ${esc(r.bultos_albaran)})</span>` : ""}</td><td>${Object.entries(cajas).map(([k,n]) => `${n}×${esc(k)}`).join(", ")}</td><td class="n">${uds}</td></tr>`;
+        <td class="n">${(r.bultos||[]).length}${r.bultos_albaran && +r.bultos_albaran !== (r.bultos||[]).length ? ` <span class="err" title="Bultos según albarán">(alb. ${esc(r.bultos_albaran)})</span>` : ""}</td><td>${Object.entries(cajas).map(([k,n]) => `${n}×${esc(k)}`).join(", ")}</td><td class="n">${uds}</td>
+        <td><button class="ghost" data-imprimir="${esc(r.id)}" title="Imprimir la ficha de este pedido">Imprimir</button></td></tr>`;
       if (ABIERTO !== r.id) return fila;
-      return fila + `<tr class="det"><td colspan="8">
+      return fila + `<tr class="det"><td colspan="9">
         <p class="note" style="margin:0 0 6px">${esc([r.cliente, textoEnvio({plat:r.plataforma, prov:r.numero_proveedor, dpto:r.departamento, destCod:r.lugar_destino,
           destino:r.centro_destino, agencia:r.agencia, bultosAlb:r.bultos_albaran})].filter(Boolean).join(" · "))}</p>
         <div class="det-b">${(r.bultos||[]).map((b,i) => `<div><b>Bulto ${i+1}/${r.bultos.length} · ${esc(b.caja)} (${esc(b.medidas)} cm)</b>
@@ -852,8 +861,29 @@ function pintarRegistro(){
     }).join("");
 }
 $("regBuscar").addEventListener("input", pintarRegistro);
+$("regFecha").addEventListener("change", () => { ABIERTO = null; pintarRegistro(); });
+$("regTodas").onclick = () => { $("regFecha").value = ""; pintarRegistro(); };
+$("regImprimir").onclick = () => {
+  const f = $("regFecha").value;
+  imprimirRegistros(VISIBLES, f ? `Fichas_${f}.pdf` : `Fichas_${VISIBLES.length}_pedidos.pdf`);
+};
+/* PDF con la ficha de cada pedido del registro (una hoja por pedido), ordenadas por fecha y pedido */
+async function imprimirRegistros(regs, nombre){
+  const est = $("regEstado");
+  if (!regs.length) return;
+  if (!window.jspdf){ est.innerHTML = '<span class="err">No se ha cargado el generador de PDF. Recarga la página.</span>'; return; }
+  const lista = [...regs].sort((a,b) => (a.fecha_albaran||"").localeCompare(b.fecha_albaran||"") || String(a.pedido_cliente).localeCompare(String(b.pedido_cliente)))
+    .map(resDeRegistro);
+  const dl = await downloadsPromise;
+  if (!dl){ est.innerHTML = '<span class="err">Este visor no permite descargar archivos.</span>'; return; }
+  try {
+    await dl.save({filename: nombre, data: crearPDF(lista).output("arraybuffer")});
+    est.innerHTML = `<span class="ok">PDF con ${lista.length} ficha${lista.length>1?"s":""}.</span>`;
+  } catch(e){ est.innerHTML = e?.code === "cancelled" || e?.code === "declined" ? "" : `<span class="err">No se pudo descargar el PDF (${esc(e?.code||"error")}).</span>`; }
+}
 $("tReg").addEventListener("click", async e => {
   const ver = e.target.dataset.ver, borrar = e.target.dataset.borrar, fila = e.target.closest("tr.fila");
+  if (e.target.dataset.imprimir){ imprimirRegistros(REGISTROS.filter(r => r.id === e.target.dataset.imprimir), `Ficha_${e.target.dataset.imprimir}.pdf`); return; }
   if (ver){ abrirRegistro(REGISTROS.find(r => r.id === ver)); return; }
   if (borrar){
     if (e.target.dataset.confirmar !== "1"){ e.target.dataset.confirmar = "1"; e.target.textContent = "Pulsa otra vez para borrar"; return; }
@@ -874,13 +904,13 @@ async function guardarRegistro(){
   if (ped === "—"){ est.innerHTML = '<span class="err">Falta el nº de pedido del cliente.</span>'; return; }
   if (!fecha){ est.innerHTML = '<span class="err">Falta la fecha del albarán.</span>'; return; }
   const docData = datosRegistro(res, {alb, ped, cli, fecha, envio: leerEnvio()}, ALBARANES[ACTIVO]?.otros, LINEAS);
-  const ref = DB.collection("envios").doc(idDoc(alb));
+  const ref = DB.collection("envios").doc(idDoc(ped));
   btn.disabled = true;
   try {
-    const previo = REGISTROS.find(r => r.id === idDoc(alb));
+    const previo = REGISTROS.find(r => r.id === idDoc(ped));
     if (previo && btn.dataset.confirmar !== "1"){
       btn.dataset.confirmar = "1"; btn.disabled = false;
-      btn.textContent = "Ya existe: pulsa otra vez para sustituirlo"; return;
+      btn.textContent = `El pedido ${ped} ya está registrado: pulsa otra vez para sustituirlo`; return;
     }
     await ref.set(docData);
     ULTIMO.guardado = true; btn.textContent = "Guardado en el registro"; btn.dataset.confirmar = "";
@@ -897,6 +927,7 @@ function datosRegistro(res, {alb, ped, cli, fecha, envio}, otros, lineas){
     plataforma: e.plat || "", numero_proveedor: e.prov || "", departamento: e.dpto || "", lugar_destino: e.destCod || "", centro_destino: e.destino || "",
     agencia: e.agencia || "", bultos_albaran: e.bultosAlb || "",
     otros_datos: otros || {},
+    no_colocadas: pedidoDe(lineas || []).fuera,
     lineas_albaran: (lineas || []).map(l => ({ref:l.ref, desc:l.desc || "", cant:l.cant, otros:l.otros || {}})),
     bultos: res.map(c => ({
       caja: c.tipo.nombre, medidas: `${c.tipo.l}x${c.tipo.a}x${c.tipo.h}`, l: c.tipo.l, a: c.tipo.a, h: c.tipo.h,
@@ -907,23 +938,28 @@ function datosRegistro(res, {alb, ped, cli, fecha, envio}, otros, lineas){
   };
 }
 
-function abrirRegistro(r){
-  if (!r) return;
-  for (const b of r.bultos) for (const x of b.contenido) DESC_EXTRA[x.ref] = x.desc;
-  const res = r.bultos.map(b => ({
+const envioDeRegistro = r => ({plat:r.plataforma||"", prov:r.numero_proveedor||"", dpto:r.departamento||"", destCod:r.lugar_destino||"",
+  destino:r.centro_destino||"", agencia:r.agencia||"", bultosAlb:r.bultos_albaran||""});
+function resDeRegistro(r){
+  for (const b of r.bultos || []) for (const x of b.contenido) DESC_EXTRA[x.ref] = x.desc;
+  const res = (r.bultos || []).map(b => ({
     tipo: {nombre:b.caja, l:b.l, a:b.a, h:b.h, vol:b.l*b.a*b.h},
     capas: b.capas.map(k => ({...k, o:[...k.o]})),
     contenido: Object.fromEntries(b.contenido.map(x => [x.ref, x.uds])),
     usado: b.usado
   }));
+  return {res, alb:r.albaran, ped:r.pedido_cliente, cli:r.cliente, fecha:r.fecha_albaran, envio:envioDeRegistro(r), fuera:r.no_colocadas || []};
+}
+function abrirRegistro(r){
+  if (!r) return;
+  const {res} = resDeRegistro(r);
   ACTIVO = -1;
-  const envio = {plat:r.plataforma||"", prov:r.numero_proveedor||"", dpto:r.departamento||"", destCod:r.lugar_destino||"", destino:r.centro_destino||"",
-    agencia:r.agencia||"", bultosAlb:r.bultos_albaran||""};
+  const envio = envioDeRegistro(r);
   ALBARANES = [{alb:r.albaran, ped:r.pedido_cliente, cli:r.cliente, fecha:r.fecha_albaran, otros:r.otros_datos || {}, envio,
     lineas: (r.lineas_albaran || r.bultos.flatMap(b => b.contenido.map(x => ({ref:x.ref, desc:x.desc, cant:x.uds}))))
       .map(l => ({ref:l.ref, desc:l.desc || "", cant:l.cant, otros:l.otros || {}}))}];
   activar(0, false);
-  pintarResultado({res, alb:r.albaran, ped:r.pedido_cliente, cli:r.cliente, fecha:r.fecha_albaran, envio, guardado:true});
+  pintarResultado({...resDeRegistro(r), guardado:true});
   $("out").scrollIntoView({behavior:"smooth", block:"start"});
 }
 iniciarRegistro();
@@ -935,10 +971,10 @@ async function registrarAuto(lista){
   let nuevos = 0, ya = 0, faltan = 0; const guardados = new Set();
   for (const a of lista){
     if (!a.alb || !a.ped){ faltan++; continue; }
-    if (REGISTROS.some(r => r.id === idDoc(a.alb))){ ya++; continue; }
+    if (REGISTROS.some(r => r.id === idDoc(a.ped))){ ya++; continue; }
     let res = [];
     try { res = resultadoDe(a).res; } catch(_){}
-    try { await DB.collection("envios").doc(idDoc(a.alb)).set(datosRegistro(res, {alb:a.alb, ped:a.ped, cli:a.cli || "El Corte Inglés", fecha:a.fecha || "", envio:a.envio}, a.otros, a.lineas)); nuevos++; guardados.add(a); }
+    try { await DB.collection("envios").doc(idDoc(a.ped)).set(datosRegistro(res, {alb:a.alb, ped:a.ped, cli:a.cli || "El Corte Inglés", fecha:a.fecha || "", envio:a.envio}, a.otros, a.lineas)); nuevos++; guardados.add(a); }
     catch(_){ faltan++; }
   }
   if (ULTIMO && guardados.has(ALBARANES[ACTIVO])){ ULTIMO.guardado = true; if ($("saveBtn")) $("saveBtn").textContent = "Guardado en el registro"; }
@@ -1063,7 +1099,7 @@ async function trozos(canvases, max){
   return blobs.slice(0, max);
 }
 
-const MAX_PAGINAS = 40;
+const MAX_PAGINAS = 100;
 function promptLectura(desde, hasta, total, conImgs, texto){
   const refs = Object.values(ARTS).slice(0, 400).map(a => `${a.ref} | ${a.desc}`).join("\n");
   return `Eres un operario de almacén. Te paso ${total > 1 ? `las páginas ${desde} a ${hasta} (de ${total}) de un documento` : "un documento"} con uno o varios albaranes de entrega emitidos por Ugari (nuestra empresa) a clientes, normalmente El Corte Inglés${conImgs ? " (imágenes; las páginas altas van partidas en dos trozos con un poco de solape: no dupliques líneas)" : ""}${texto ? " y el texto extraído del PDF" : ""}.
@@ -1169,7 +1205,7 @@ async function procesarDocumento(lista){
     ACTIVO = -1; ALBARANES = lista; activar(0);
     const nl = lista.reduce((s,a) => s + a.lineas.length, 0);
     const reg = await registrarAuto(lista);
-    est.innerHTML = reg + `<span class="ok">Leídos ${lista.length} albarán${lista.length>1?"es":""} con ${nl} líneas${files.length > 1 ? ` de ${files.length} archivos` : ""}${cortado ? ` (de los PDF largos solo se leen las primeras ${MAX_PAGINAS} páginas)` : ""}.</span>${leidosDirecto ? ` <span class="note">(${leidosDirecto} leído${leidosDirecto>1?"s":""} directamente del PDF de Ugari)</span>` : ""} Revisa los datos antes de guardar.`;
+    est.innerHTML = reg + `<span class="ok">Leídos ${lista.length} ${lista.length>1?"albaranes":"albarán"} con ${nl} líneas${files.length > 1 ? ` de ${files.length} archivos` : ""}${cortado ? ` (de los PDF largos solo se leen las primeras ${MAX_PAGINAS} páginas)` : ""}.</span>${leidosDirecto ? ` <span class="note">(${leidosDirecto} leído${leidosDirecto>1?"s":""} directamente del PDF de Ugari)</span>` : ""} Revisa los datos antes de guardar.`;
   } catch(e){
     const msg = {not_granted:"No has permitido que la página use Claude. Puedes escribir las líneas a mano.",
       rate_limited:"Demasiadas lecturas seguidas. Espera un poco y vuelve a subirlo.",
